@@ -1,6 +1,6 @@
-# codex-switch
+# model-switch
 
-A small local routing layer for OpenAI Codex.
+A small local model and reasoning router for OpenAI Codex.
 
 It sits between Codex Desktop / CLI and the normal Codex backend, asks TypeSafe Jev which model and reasoning effort fit the current task, and can optionally rewrite the request before forwarding it.
 
@@ -10,7 +10,7 @@ It sits between Codex Desktop / CLI and the normal Codex backend, asks TypeSafe 
 Codex Desktop / CLI
         |
         v
-codex-switch (localhost)
+model-switch (localhost)
         |
         +--> TypeSafe Jev
         |    model + effort + confidence
@@ -23,9 +23,9 @@ No OpenRouter. No community router in the request path. The code is intentionall
 
 ## Why
 
-Using the strongest model and highest reasoning effort for every Codex turn is wasteful. A typo fix and an architectural refactor do not need the same amount of model.
+A typo fix and an architectural refactor do not need the same model or reasoning effort.
 
-codex-switch is an experiment in making that choice automatically while keeping the user's normal Codex authentication and workflow.
+model-switch is an experiment in choosing that automatically while keeping the user's normal Codex authentication and workflow.
 
 ## Status
 
@@ -36,6 +36,7 @@ The safe default is **`observe`**:
 - Jev recommends a model and reasoning effort.
 - The recommendation and confidence are printed locally.
 - The Codex request is not changed.
+- Local counters show how Jev would have routed the session.
 
 Initial candidates:
 
@@ -49,7 +50,7 @@ TypeSafe Jev is currently in early access. See the [TypeSafe announcement](https
 
 ## Safety model
 
-codex-switch is conservative by design:
+model-switch is conservative by design:
 
 - **Fail open** - if Jev errors or times out, the original Codex request is forwarded.
 - **Observe first** - routing is disabled by default.
@@ -57,6 +58,7 @@ codex-switch is conservative by design:
 - **Short Jev timeout** - default 2.5 seconds, with SDK retries disabled.
 - **Local listener** - binds to `127.0.0.1` by default.
 - **No credential storage** - ChatGPT/OpenAI authorization is forwarded in memory and never written to logs.
+- **No prompt logging** - statistics contain counts only.
 - **No shared fallback session** - missing session metadata never falls back to a global routing state.
 
 ## Requirements
@@ -70,8 +72,8 @@ Without `TYPESAFE_API_KEY`, the proxy still starts and behaves as plain passthro
 ## Quick start
 
 ```powershell
-git clone https://github.com/aesgalexis/codex-switch.git
-cd codex-switch
+git clone https://github.com/aesgalexis/model-switch.git
+cd model-switch
 npm install
 
 $env:TYPESAFE_API_KEY="YOUR_KEY"
@@ -87,8 +89,41 @@ Invoke-RestMethod http://127.0.0.1:8317/health
 Example:
 
 ```json
-{"ok":true,"mode":"observe","jev":true,"minConfidence":0.65}
+{"ok":true,"name":"model-switch","mode":"observe","jev":true,"minConfidence":0.65}
 ```
+
+Routing statistics:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8317/stats
+```
+
+Example:
+
+```json
+{
+  "requests": 42,
+  "responseRequests": 38,
+  "jevDecisions": 12,
+  "routed": 0,
+  "passthrough": 38,
+  "routingErrors": 0,
+  "recommendations": {
+    "models": {
+      "gpt-5.6-luna": 7,
+      "gpt-5.6-terra": 3,
+      "gpt-5.6-sol": 2
+    },
+    "efforts": {
+      "low": 7,
+      "medium": 4,
+      "high": 1
+    }
+  }
+}
+```
+
+Counters reset when model-switch restarts. Nothing is persisted yet.
 
 ## Codex configuration
 
@@ -98,10 +133,10 @@ The important part is:
 
 ```toml
 model = "gpt-5.6-sol"
-model_provider = "codex-switch"
+model_provider = "model-switch"
 
-[model_providers.codex-switch]
-name = "Codex Switch"
+[model_providers.model-switch]
+name = "Model Switch"
 base_url = "http://127.0.0.1:8317"
 wire_api = "responses"
 requires_openai_auth = true
@@ -117,7 +152,7 @@ Keep your normal Codex configuration available so reverting is trivial.
 Jev makes a recommendation, but nothing is rewritten.
 
 ```text
-[codex-switch] observe gpt-5.6-sol -> gpt-5.6-luna / low confidence=0.91/0.88 [jev, routable]
+[model-switch] observe gpt-5.6-sol -> gpt-5.6-luna / low confidence=0.91/0.88 [jev, routable]
 ```
 
 This is the mode intended for the first real-world tests.
@@ -125,11 +160,11 @@ This is the mode intended for the first real-world tests.
 ### `route`
 
 ```powershell
-$env:CODEX_SWITCH_MODE="route"
+$env:MODEL_SWITCH_MODE="route"
 npm start
 ```
 
-Requests are rewritten only when both Jev confidence values are at or above `CODEX_SWITCH_MIN_CONFIDENCE`.
+Requests are rewritten only when both Jev confidence values are at or above `MODEL_SWITCH_MIN_CONFIDENCE`.
 
 ### `off`
 
@@ -139,23 +174,23 @@ Plain local passthrough. Jev is not consulted.
 
 See [`.env.example`](.env.example).
 
-Useful settings:
-
 | Variable | Default | Purpose |
 | --- | ---: | --- |
-| `CODEX_SWITCH_MODE` | `observe` | `off`, `observe`, or `route` |
-| `CODEX_SWITCH_PORT` | `8317` | Local proxy port |
-| `CODEX_SWITCH_JEV_TIMEOUT_MS` | `2500` | Jev timeout before passthrough |
-| `CODEX_SWITCH_MIN_CONFIDENCE` | `0.65` | Minimum model and effort confidence for routing |
-| `CODEX_SWITCH_MAX_ROUTING_TEXT` | `12000` | Maximum latest-user text sent to Jev |
+| `MODEL_SWITCH_MODE` | `observe` | `off`, `observe`, or `route` |
+| `MODEL_SWITCH_PORT` | `8317` | Local proxy port |
+| `MODEL_SWITCH_JEV_TIMEOUT_MS` | `2500` | Jev timeout before passthrough |
+| `MODEL_SWITCH_MIN_CONFIDENCE` | `0.65` | Minimum model and effort confidence for routing |
+| `MODEL_SWITCH_MAX_ROUTING_TEXT` | `12000` | Maximum latest-user text sent to Jev |
+
+The old `CODEX_SWITCH_*` environment variable names are still accepted as temporary backwards-compatible aliases.
 
 ## Privacy
 
 The proxy does **not** log prompts or authorization headers.
 
-Jev is not local: when enabled, TypeSafe receives the latest user request needed to make the routing decision, capped by `CODEX_SWITCH_MAX_ROUTING_TEXT`.
+Jev is not local: when enabled, TypeSafe receives the latest user request needed to make the routing decision, capped by `MODEL_SWITCH_MAX_ROUTING_TEXT`.
 
-That tradeoff is intentional and should be understood before using route mode with sensitive code or prompts.
+The local `/stats` endpoint stores only counters and recommendation labels in memory.
 
 ## Development
 
@@ -170,7 +205,7 @@ CI runs the same checks on pushes and pull requests.
 
 - Verify the exact request shape emitted by current Codex Desktop on Windows.
 - Collect real `observe` decisions.
-- Add routing counters and estimated model savings.
+- Compare recommendation distribution against actual Codex usage.
 - Validate turn pinning against real Codex session metadata.
 - Enable `route` only after observation data looks sane.
 - Test Astra separately.
