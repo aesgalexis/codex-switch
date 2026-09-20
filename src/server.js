@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { loadConfig } from "./config.js";
 import { inspectRequest } from "./request.js";
 import { decideRoute } from "./router.js";
+import { buildUpstreamUrl } from "./upstream.js";
 
 const config = loadConfig();
 
@@ -36,33 +37,51 @@ function responseHeaders(headers) {
   return result;
 }
 
+function confidenceLabel(decision) {
+  if (decision.modelConfidence == null || decision.effortConfidence == null) return "";
+  return ` confidence=${decision.modelConfidence.toFixed(2)}/${decision.effortConfidence.toFixed(2)}`;
+}
+
 async function handle(req, res) {
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, mode: config.mode, jev: config.jevEnabled }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        mode: config.mode,
+        jev: config.jevEnabled,
+        minConfidence: config.minConfidence,
+      }),
+    );
     return;
   }
 
   const raw = await readBody(req);
   let outgoing = raw;
 
+  const requestPath = new URL(req.url ?? "/", "http://localhost").pathname;
   const isResponsesRequest =
     req.method === "POST" &&
-    (req.url === "/responses" || req.url === "/v1/responses");
+    (requestPath === "/responses" || requestPath === "/v1/responses");
 
   if (isResponsesRequest && raw.length > 0 && config.mode !== "off") {
     try {
       const body = JSON.parse(raw.toString("utf8"));
       const request = inspectRequest(body, config.maxRoutingText);
-      const decision = await decideRoute(request, { enabled: config.jevEnabled });
+      const decision = await decideRoute(request, {
+        enabled: config.jevEnabled,
+        timeoutMs: config.jevTimeoutMs,
+        minConfidence: config.minConfidence,
+      });
 
       log(
         `${config.mode.padEnd(7)} ${request.currentModel} -> ${decision.model}` +
           (decision.effort ? ` / ${decision.effort}` : "") +
-          ` [${decision.source}]`
+          confidenceLabel(decision) +
+          ` [${decision.source}${decision.safeToRoute ? ", routable" : ""}]`,
       );
 
-      if (config.mode === "route" && decision.source === "jev") {
+      if (config.mode === "route" && decision.source === "jev" && decision.safeToRoute) {
         body.model = decision.model;
         if (body.reasoning && decision.effort) {
           body.reasoning.effort = decision.effort;
@@ -74,12 +93,12 @@ async function handle(req, res) {
     }
   }
 
-  const upstreamUrl = new URL(req.url ?? "/", `${config.upstream}/`);
+  const upstreamUrl = buildUpstreamUrl(config.upstream, req.url ?? "/");
   const upstream = await fetch(upstreamUrl, {
     method: req.method,
     headers: upstreamHeaders(req.headers),
     body: ["GET", "HEAD"].includes(req.method ?? "GET") ? undefined : outgoing,
-    redirect: "manual"
+    redirect: "manual",
   });
 
   res.writeHead(upstream.status, responseHeaders(upstream.headers));
@@ -106,6 +125,6 @@ server.listen(config.port, config.host, () => {
   log(`listening on http://${config.host}:${config.port}`);
   log(`mode=${config.mode} jev=${config.jevEnabled ? "enabled" : "disabled"}`);
   if (!config.jevEnabled) {
-    log("TYPESAFE_API_KEY is not set; routing will pass through unchanged");
+    log("TYPESAFE_API_KEY is not set; proxy is running in passthrough mode");
   }
 });
