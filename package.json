@@ -2,15 +2,34 @@
   "name": "codex-switch",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal local model router for Codex, powered by TypeSafe Jev.",
+  "description": "Minimal local model and reasoning router for OpenAI Codex, powered by TypeSafe Jev.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "check": "node --check src/config.js && node --check src/request.js && node --check src/router.js && node --check src/server.js && node --check src/upstream.js && node --test"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aesgalexis/codex-switch.git"
+  },
+  "homepage": "https://github.com/aesgalexis/codex-switch#readme",
+  "bugs": {
+    "url": "https://github.com/aesgalexis/codex-switch/issues"
+  },
+  "keywords": [
+    "codex",
+    "openai",
+    "jev",
+    "typesafe",
+    "router",
+    "model-routing"
+  ],
   "dependencies": {
     "@typesafe-ai/sdk": "0.6.0"
   }
