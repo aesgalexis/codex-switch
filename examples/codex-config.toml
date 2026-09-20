@@ -1,0 +1,14 @@
+# Add this provider to ~/.codex/config.toml only when codex-switch is running.
+# Keep your normal OpenAI provider config intact so reverting is trivial.
+
+model = "gpt-5.6-sol"
+model_provider = "codex-switch"
+
+[model_providers.codex-switch]
+name = "Codex Switch"
+base_url = "http://127.0.0.1:8317"
+wire_api = "responses"
+requires_openai_auth = true
+
+# Force HTTP through the local router. Do not let Codex bypass it via WebSocket.
+supports_websockets = false
