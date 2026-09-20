@@ -1,0 +1,17 @@
+{
+  "name": "codex-switch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal local model router for Codex, powered by TypeSafe Jev.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0"
+  }
+}
