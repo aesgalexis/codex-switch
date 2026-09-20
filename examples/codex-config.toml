@@ -1,11 +1,11 @@
-# Add this provider to ~/.codex/config.toml only when codex-switch is running.
+# Add this provider to ~/.codex/config.toml only when model-switch is running.
 # Keep your normal OpenAI provider config intact so reverting is trivial.
 
 model = "gpt-5.6-sol"
-model_provider = "codex-switch"
+model_provider = "model-switch"
 
-[model_providers.codex-switch]
-name = "Codex Switch"
+[model_providers.model-switch]
+name = "Model Switch"
 base_url = "http://127.0.0.1:8317"
 wire_api = "responses"
 requires_openai_auth = true
