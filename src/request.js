@@ -45,18 +45,18 @@ export function inspectRequest(body, maxChars = 12000) {
     lastItemKind = "user";
   }
 
-  const sessionKey =
+  const rawSessionKey =
     body?.client_metadata?.turn_id ??
     body?.client_metadata?.root_turn_id ??
     body?.prompt_cache_key ??
-    "global";
+    null;
 
   return {
     currentModel: typeof body?.model === "string" ? body.model : "unknown",
     currentEffort: body?.reasoning?.effort ?? null,
     latestUserText: latestUserText.slice(-maxChars),
     isNewUserStep: lastItemKind === "user" && Boolean(latestUserText),
-    sessionKey: String(sessionKey),
+    sessionKey: rawSessionKey == null ? null : String(rawSessionKey),
     toolCount: Array.isArray(body?.tools) ? body.tools.length : 0,
   };
 }
