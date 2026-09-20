@@ -3,12 +3,14 @@ import { Readable } from "node:stream";
 import { loadConfig } from "./config.js";
 import { inspectRequest } from "./request.js";
 import { decideRoute } from "./router.js";
+import { createStats } from "./stats.js";
 import { buildUpstreamUrl } from "./upstream.js";
 
 const config = loadConfig();
+const stats = createStats();
 
 function log(message) {
-  process.stdout.write(`[codex-switch] ${message}\n`);
+  process.stdout.write(`[model-switch] ${message}\n`);
 }
 
 async function readBody(req) {
@@ -43,16 +45,25 @@ function confidenceLabel(decision) {
 }
 
 async function handle(req, res) {
+  stats.request();
+
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(
       JSON.stringify({
         ok: true,
+        name: "model-switch",
         mode: config.mode,
         jev: config.jevEnabled,
         minConfidence: config.minConfidence,
       }),
     );
+    return;
+  }
+
+  if (req.url === "/stats") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(stats.snapshot(), null, 2));
     return;
   }
 
@@ -64,6 +75,8 @@ async function handle(req, res) {
     req.method === "POST" &&
     (requestPath === "/responses" || requestPath === "/v1/responses");
 
+  if (isResponsesRequest) stats.responseRequest();
+
   if (isResponsesRequest && raw.length > 0 && config.mode !== "off") {
     try {
       const body = JSON.parse(raw.toString("utf8"));
@@ -73,6 +86,8 @@ async function handle(req, res) {
         timeoutMs: config.jevTimeoutMs,
         minConfidence: config.minConfidence,
       });
+
+      stats.decision(decision);
 
       log(
         `${config.mode.padEnd(7)} ${request.currentModel} -> ${decision.model}` +
@@ -87,10 +102,17 @@ async function handle(req, res) {
           body.reasoning.effort = decision.effort;
         }
         outgoing = Buffer.from(JSON.stringify(body));
+        stats.routed();
+      } else {
+        stats.passthrough();
       }
     } catch (error) {
+      stats.routingError();
+      stats.passthrough();
       log(`routing failed; passthrough: ${error instanceof Error ? error.message : String(error)}`);
     }
+  } else if (isResponsesRequest) {
+    stats.passthrough();
   }
 
   const upstreamUrl = buildUpstreamUrl(config.upstream, req.url ?? "/");
@@ -117,7 +139,7 @@ const server = http.createServer((req, res) => {
     if (!res.headersSent) {
       res.writeHead(502, { "content-type": "application/json" });
     }
-    res.end(JSON.stringify({ error: "codex-switch upstream failure" }));
+    res.end(JSON.stringify({ error: "model-switch upstream failure" }));
   });
 });
 
