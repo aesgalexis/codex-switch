@@ -1,0 +1,111 @@
+import http from "node:http";
+import { Readable } from "node:stream";
+import { loadConfig } from "./config.js";
+import { inspectRequest } from "./request.js";
+import { decideRoute } from "./router.js";
+
+const config = loadConfig();
+
+function log(message) {
+  process.stdout.write(`[codex-switch] ${message}\n`);
+}
+
+async function readBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+function upstreamHeaders(headers) {
+  const result = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase();
+    if (["host", "content-length", "connection", "transfer-encoding"].includes(lower)) continue;
+    if (value !== undefined) result[key] = value;
+  }
+  return result;
+}
+
+function responseHeaders(headers) {
+  const result = {};
+  for (const [key, value] of headers.entries()) {
+    const lower = key.toLowerCase();
+    if (["content-length", "connection", "transfer-encoding"].includes(lower)) continue;
+    result[key] = value;
+  }
+  return result;
+}
+
+async function handle(req, res) {
+  if (req.url === "/health") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, mode: config.mode, jev: config.jevEnabled }));
+    return;
+  }
+
+  const raw = await readBody(req);
+  let outgoing = raw;
+
+  const isResponsesRequest =
+    req.method === "POST" &&
+    (req.url === "/responses" || req.url === "/v1/responses");
+
+  if (isResponsesRequest && raw.length > 0 && config.mode !== "off") {
+    try {
+      const body = JSON.parse(raw.toString("utf8"));
+      const request = inspectRequest(body, config.maxRoutingText);
+      const decision = await decideRoute(request, { enabled: config.jevEnabled });
+
+      log(
+        `${config.mode.padEnd(7)} ${request.currentModel} -> ${decision.model}` +
+          (decision.effort ? ` / ${decision.effort}` : "") +
+          ` [${decision.source}]`
+      );
+
+      if (config.mode === "route" && decision.source === "jev") {
+        body.model = decision.model;
+        if (body.reasoning && decision.effort) {
+          body.reasoning.effort = decision.effort;
+        }
+        outgoing = Buffer.from(JSON.stringify(body));
+      }
+    } catch (error) {
+      log(`routing failed; passthrough: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const upstreamUrl = new URL(req.url ?? "/", `${config.upstream}/`);
+  const upstream = await fetch(upstreamUrl, {
+    method: req.method,
+    headers: upstreamHeaders(req.headers),
+    body: ["GET", "HEAD"].includes(req.method ?? "GET") ? undefined : outgoing,
+    redirect: "manual"
+  });
+
+  res.writeHead(upstream.status, responseHeaders(upstream.headers));
+
+  if (!upstream.body) {
+    res.end();
+    return;
+  }
+
+  Readable.fromWeb(upstream.body).pipe(res);
+}
+
+const server = http.createServer((req, res) => {
+  handle(req, res).catch((error) => {
+    log(`proxy error: ${error instanceof Error ? error.message : String(error)}`);
+    if (!res.headersSent) {
+      res.writeHead(502, { "content-type": "application/json" });
+    }
+    res.end(JSON.stringify({ error: "codex-switch upstream failure" }));
+  });
+});
+
+server.listen(config.port, config.host, () => {
+  log(`listening on http://${config.host}:${config.port}`);
+  log(`mode=${config.mode} jev=${config.jevEnabled ? "enabled" : "disabled"}`);
+  if (!config.jevEnabled) {
+    log("TYPESAFE_API_KEY is not set; routing will pass through unchanged");
+  }
+});
