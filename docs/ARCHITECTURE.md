@@ -60,9 +60,10 @@ model-switch should reduce redundant orientation work, not replace Codex.
 
 ## Hook lifecycle
 
-Phase 1 currently implements the `PreToolUse` and `PostToolUse` observation
-points below for Bash in Codex CLI. The observer records metadata only and
-always allows the original operation unchanged.
+Phase 1 and the initial Phase 2 shadow layer implement the `PreToolUse` and
+`PostToolUse` points below for Bash in Codex CLI. The observer records metadata,
+maintains local evidence and generations, and always allows the original
+operation unchanged.
 
 Codex Desktop currently sends shell work through a specialized
 `custom_tool_call: exec` route that does not traverse this lifecycle hook path.
@@ -73,11 +74,12 @@ telemetry at this stage.
 
 Intended responsibilities:
 
-1. classify whether the pending call is eligible
-2. check whether exact fresh evidence already answers it
-3. use Jev only if semantic judgment is needed
-4. reuse or rewrite only when confidence and freshness gates pass
-5. otherwise allow the original tool call unchanged
+1. classify the pending call and conservatively decompose safe semicolon-only
+   compounds
+2. check whether exact same-session, same-generation evidence already answers it
+3. emit a deterministic shadow decision
+4. optionally ask Jev one bounded sufficiency question for related evidence
+5. always allow the original tool call unchanged
 
 Initial eligible surface should be tiny and read-only.
 
@@ -85,11 +87,11 @@ Initial eligible surface should be tiny and read-only.
 
 Intended responsibilities:
 
-1. observe successful eligible checks
-2. normalize results into evidence records
-3. update provenance and timestamps
-4. advance or invalidate workspace state after mutations
-5. collect metrics about repeated checks
+1. observe successful eligible simple checks
+2. normalize safe scalar results or fingerprint other outputs
+3. update provenance, timestamps, workspace identity, and session
+4. advance workspace generation after every operation not proven read-only
+5. collect metrics about repeated checks and shadow decisions
 
 ### UserPromptSubmit
 
@@ -126,7 +128,8 @@ Example:
 
 ## Workspace generation
 
-Time-to-live alone is unsafe.
+Time-to-live alone is unsafe. The current state is persisted in the ignored
+`.model-switch/reflex-state.json` file and bounded to 500 evidence records.
 
 A clean status observed 5 seconds ago is stale if Codex edited a file 1 second ago.
 
@@ -151,14 +154,21 @@ Examples:
 - selected `git status` forms
 - selected read-only comparisons once semantics are well understood
 
-Unknown, compound, redirected, piped, or potentially mutating shell commands
-pass through untouched and are not eligible. The current implemented allowlist
-covers `pwd`, repository root, current branch, HEAD, and selected Git status
-forms.
+Unknown, redirected, piped, variable/subshell-driven, conditional, or potentially
+mutating shell commands pass through untouched and are not eligible. Simple
+semicolon-only compounds are decomposed only when their shell structure is
+unambiguous; internal operations are observed independently, while their combined
+output is not persisted as evidence. The allowlist covers explicit Git queries,
+filesystem reads/searches/metadata, runtime/package inspection, and bounded
+read-only queries for external CLIs used by this project.
 
 ## Jev gate
 
-Jev should not receive a whole transcript.
+Jev does not receive a whole transcript. The current shadow integration sends
+only requested/prior evidence kinds, command family, evidence age, and the fact
+that both observations share a workspace generation. It uses a conservative
+confidence threshold, short timeout, no retries, and returns `uncertain` on any
+failure. Its answer is recorded but never applied to the tool call.
 
 Example input:
 
@@ -245,5 +255,6 @@ Useful measurements:
 The first milestone should optimize observability before optimization.
 
 The observer is already producing real local telemetry. Its first captured
-same-session repeat was `git rev-parse HEAD` after 124.707 seconds. No result is
-currently blocked, rewritten, cached, or reused.
+same-session repeat was `git rev-parse HEAD` after 124.707 seconds. Results are
+now cached locally as evidence and evaluated in shadow mode, but no tool call is
+currently blocked, rewritten, skipped, or served from that cache.

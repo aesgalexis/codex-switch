@@ -148,23 +148,34 @@ requested with Sol + High was evaluated by Jev as `gpt-5.6-luna` + `low`.
 The router remains in its safe default `observe` mode, so that recommendation
 was recorded without rewriting the request.
 
-The **Phase 1 reflex observer** is intentionally passive:
+The **Phase 1 observer / early Phase 2 shadow layer** is intentionally passive:
 
 - project-scoped Codex `PreToolUse` and `PostToolUse` hooks for Bash, verified
   in Codex CLI
-- a tiny allowlist of read-only orientation checks: repository root, current
-  branch, HEAD, selected Git status forms, and `pwd`
-- semantic command keys instead of raw command logging
+- a conservative read-only classifier for Git inspection, filesystem reading
+  and search, runtime/package inspection, and bounded `gh`, Firebase, and
+  `gcloud` queries
+- safe decomposition of semicolon-only compounds, while pipes, redirects,
+  variables, subshells, conditionals, and other ambiguous shell forms remain
+  non-reusable
+- redacted local command diagnostics plus semantic command keys
 - hashed session, turn, and tool-use identifiers
 - no tool-response contents in the log
-- repetition metrics via `npm run reflex:stats`
+- workspace generations and normalized local evidence with provenance
+- deterministic shadow decisions: `would_reuse`, `would_refresh`,
+  `stale_after_mutation`, `not_eligible`, and `unknown`
+- optional Jev shadow judgments (`reuse | refresh | uncertain`) for bounded
+  semantic sufficiency cases
+- richer repetition, coverage, unknown-family, mutation, and potential-savings
+  metrics via `npm run reflex:stats`
 - fail-open behavior
 - no blocking, rewriting, or reuse yet
 
 Real telemetry is now working. The first repeated check observed within one
 actual session was `git rev-parse HEAD`, repeated after 124.707 seconds
-(approximately 125 seconds). Compound commands are allowed to run unchanged
-but are deliberately not eligible for reflex handling yet.
+(approximately 125 seconds). Safe semicolon-separated compounds can now expose
+recognized internal operations for observation, but the compound still runs
+unchanged and its combined output is not stored as evidence.
 
 There is currently an integration difference between Codex clients. Codex CLI
 invokes Bash through the `PreToolUse`/`PostToolUse` lifecycle path used by this
@@ -201,16 +212,16 @@ Model routing is now a **secondary module**, not the main purpose.
 
 ### Next implementation
 
-The immediate goal is to collect more real CLI usage. After that, the next
-milestone is the deterministic evidence path:
+The immediate goal is to collect more real CLI usage and validate the new
+shadow decisions. The deterministic evidence path now has an initial local
+implementation; the remaining milestone is to prove it safe:
 
-1. persist normalized results for the tiny read-only allowlist
-2. add repo identity and workspace generation
-3. invalidate evidence after potentially mutating operations
-4. dry-run exact reuse decisions
-5. manually review those decisions before suppressing any tool call
-6. only then begin avoiding proven-redundant checks
-7. reserve Jev `reuse | refresh | uncertain` judgments for semantic cases where
+1. collect a larger real-session sample
+2. review classification and redaction misses
+3. validate generation changes after potentially mutating operations
+4. review deterministic and Jev shadow decisions
+5. only then begin avoiding proven-redundant checks
+6. reserve Jev `reuse | refresh | uncertain` judgments for semantic cases where
    local deterministic facts are not sufficient
 
 See [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -228,13 +239,22 @@ orientation checks were observed:
 npm run reflex:stats
 ```
 
-The local event log is written to `.model-switch/reflex-events.jsonl` by default and is ignored by Git. Set `MODEL_SWITCH_REFLEX_LOG` to override the path.
+The local event log is written to `.model-switch/reflex-events.jsonl`; evidence
+and generation state are written to `.model-switch/reflex-state.json`. Both are
+ignored by Git. Set `MODEL_SWITCH_REFLEX_LOG` to relocate the event log and its
+adjacent state file.
 
-The initial allowlist recognizes only simple read-only checks such as repository
-root, branch, HEAD, selected Git status forms, and `pwd`. Compound, piped,
-redirected, unknown, or potentially mutating shell commands pass through and
-are never eligible. Phase 1 is strictly observational: it does not block,
-rewrite, or reuse results.
+Recognized operations include explicit Git queries (`status`, `diff`, branch
+queries, `rev-parse`, `log`, `show`, refs and config reads), filesystem reads,
+listings, metadata and searches, Node/npm inspection, and a bounded set of
+read-only external CLI queries. Unknown or potentially mutating commands
+invalidate the current workspace generation conservatively. Phase 1/2 remains
+strictly observational: it does not block, rewrite, skip, or reuse results.
+
+When `TYPESAFE_API_KEY` is available, the hook may ask Jev one bounded semantic
+question for related evidence in shadow mode. Jev never receives command output,
+repository contents, or a transcript. See `.env.example` for its independent
+timeout, confidence threshold, and off switch.
 
 ## Existing router quick start
 
@@ -296,7 +316,12 @@ The current proxy does not log prompts or authorization headers.
 
 Jev is remote. In the existing router, TypeSafe receives the latest user request required for the routing decision, capped by `MODEL_SWITCH_MAX_ROUTING_TEXT`.
 
-The reflex architecture is intended to send Jev only the **small bounded state required for a decision**, not whole repository contents or full Codex transcripts.
+The reflex shadow gate sends Jev only small metadata: requested/prior evidence
+kind, command family, age, and whether the workspace generation matches. Local
+command diagnostics are redacted for common credentials and remain under the
+Git-ignored `.model-switch/` directory; tool-response contents are not written
+to the event log. Evidence stores safe scalar values only for a small set of
+facts and fingerprints other outputs.
 
 ## References
 

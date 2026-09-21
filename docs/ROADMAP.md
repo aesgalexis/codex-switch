@@ -64,16 +64,24 @@ captured; broader usage is still needed before reuse is implemented.
 
 ## Phase 2 - deterministic evidence store
 
+Status: initial shadow implementation complete; real-session validation in
+progress. No command is suppressed.
+
 Goal: answer exact repeated checks without Jev.
 
-Build:
+Implemented in shadow mode:
 
-- in-memory evidence store
-- repo identity
-- workspace generation
-- provenance
-- freshness rules
-- allowlist for simple read-only Git/shell checks
+- bounded local evidence store under `.model-switch/`
+- hashed workspace/repository identity
+- workspace generation advanced by any non-proven-read-only operation
+- provenance, timestamps, sessions, command and response fingerprints
+- exact same-session/same-generation reuse candidates
+- stale-after-mutation decisions
+- broader conservative Git, filesystem, runtime, GitHub, Firebase, and gcloud
+  read-only classification
+- safe semicolon-only compound decomposition
+- redacted unknown-command diagnostics and expanded statistics
+- optional bounded Jev sufficiency judgments for related evidence
 
 Initial candidates:
 
@@ -82,14 +90,16 @@ Initial candidates:
 - HEAD
 - selected clean/dirty checks
 
-Behavior:
+Current behavior:
 
-- observe first
-- add a dry-run decision showing when a call *could* have been reused
+- observe and persist evidence
+- calculate dry-run decisions showing when a call *could* have been reused
+- always execute the original tool call
 
 Success criterion:
 
-Manual review shows the deterministic reuse decisions are correct.
+Enough real-session review shows deterministic and semantic shadow decisions,
+generation invalidation, and redaction behavior are correct.
 
 ## Phase 3 - safe reuse
 
@@ -199,8 +209,8 @@ Then expand one behavior at a time.
 ## Immediate next objective
 
 1. Collect real CLI usage without changing tool behavior.
-2. Build deterministic evidence with provenance and invalidation.
-3. Validate proposed reuse decisions in dry-run form.
+2. Audit classifier misses, redaction, provenance, and generation invalidation.
+3. Validate deterministic and Jev decisions in shadow form.
 4. Only then avoid a tiny set of demonstrably redundant checks.
-5. Use Jev later for bounded semantic decisions where deterministic local facts
-   cannot decide safely.
+5. Keep Jev limited to bounded semantic decisions where deterministic local
+   facts cannot decide safely.
