@@ -22,10 +22,28 @@ test("summarizes operations, repeats, compounds, mutations, and shadow savings",
   assert.equal(summary.shadowDecisions.would_reuse, 1);
   assert.equal(summary.shadowWouldReuse, 1);
   assert.equal(summary.actualReuse, 1);
-  assert.equal(summary.actualToolCallsSaved, 1);
+  assert.equal(summary.gitSubprocessesAvoided, 1);
+  assert.equal(summary.toolCallsAvoidedByPreToolReuse, 0);
   assert.equal(summary.reuseFallbacks, 0);
   assert.equal(summary.falseReuseErrors, 0);
   assert.equal(summary.potentialSavings.toolCalls, 1);
   assert.equal(summary.potentialSavings.reusableOperations, 1);
   assert.deepEqual(summary.repeatIntervals, { count: 1, minMs: 5000, avgMs: 5000, maxMs: 5000 });
+});
+
+test("correlates injected prompt facts with orientation checks in the same turn", () => {
+  const events = [
+    { event: "UserPromptSubmit", at: "2026-09-21T10:00:00.000Z", session: "s", turn: "t", hintCandidate: true, hintInjected: true, hintFacts: ["git.root", "git.head"] },
+    { event: "PreToolUse", at: "2026-09-21T10:00:02.000Z", session: "s", turn: "t", operations: [{ key: "git.head", family: "git", access: "read-only", eligible: true, commandHash: "h", actualReuse: { outcome: "actual_reuse" } }] },
+    { event: "PreToolUse", at: "2026-09-21T10:00:03.000Z", session: "s", turn: "t", operations: [{ key: "fs.read", family: "filesystem", access: "read-only", eligible: true, commandHash: "f" }] },
+  ];
+  const summary = summarizeReflexEvents(events);
+  assert.equal(summary.promptHints.userPromptsObserved, 1);
+  assert.equal(summary.promptHints.promptsWithStateHint, 1);
+  assert.equal(summary.promptHints.factsInjected, 2);
+  assert.equal(summary.promptHints.orientationChecksAfterHint.total, 1);
+  assert.equal(summary.promptHints.orientationChecksAfterHint.headAfterHeadHint, 1);
+  assert.equal(summary.promptHints.orientationChecksAfterHint.fallbackActualReuse, 1);
+  assert.deepEqual(summary.toolCallsPerPromptTurn.withHint, { turns: 1, min: 2, avg: 2, max: 2 });
+  assert.equal(summary.promptHints.estimatedChecksAvoided, null);
 });

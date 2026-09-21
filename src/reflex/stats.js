@@ -21,6 +21,16 @@ function eventOperations(event) {
   return [];
 }
 
+function numberSummary(values) {
+  if (values.length === 0) return { turns: 0, min: null, avg: null, max: null };
+  return {
+    turns: values.length,
+    min: Math.min(...values),
+    avg: Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2)),
+    max: Math.max(...values),
+  };
+}
+
 export function summarizeReflexEvents(events) {
   const preEvents = events.filter((event) => event?.event === "PreToolUse");
   const byCommand = {};
@@ -89,8 +99,46 @@ export function summarizeReflexEvents(events) {
   }
 
   const reuseDeliveries = events.filter((event) => event?.event === "PostToolUse" && event?.actualReuseDelivery);
-  const actualToolCallsSaved = reuseDeliveries.filter((event) => event.actualReuseDelivery.success).length;
+  const gitSubprocessesAvoided = reuseDeliveries.filter((event) => event.actualReuseDelivery.success).length;
   reuseErrors += reuseDeliveries.filter((event) => !event.actualReuseDelivery.success).length;
+
+  const hintWindowMs = 60000;
+  const promptEvents = events.filter((event) => event?.event === "UserPromptSubmit");
+  const factsInjectedByKind = {};
+  const orientationAfterHint = { total: 0, headAfterHeadHint: 0, branchAfterBranchHint: 0, rootAfterRootHint: 0, fallbackActualReuse: 0 };
+  const hintedToolCounts = [];
+  const unhintedToolCounts = [];
+  const hintedOrientationCounts = [];
+  const controlOrientationCounts = [];
+
+  for (const prompt of promptEvents) {
+    const facts = new Set(Array.isArray(prompt.hintFacts) ? prompt.hintFacts : []);
+    if (prompt.hintInjected) for (const fact of facts) bump(factsInjectedByKind, fact);
+    const start = Date.parse(prompt.at);
+    const turnCalls = preEvents.filter((event) =>
+      prompt.turn && event.turn === prompt.turn && event.session === prompt.session &&
+      Number.isFinite(start) && Date.parse(event.at) >= start && Date.parse(event.at) - start <= hintWindowMs
+    );
+    const orientation = turnCalls.flatMap(eventOperations).filter((operation) =>
+      ["git.head", "git.branch.current", "git.root"].includes(operation.key)
+    );
+    if (prompt.hintInjected) {
+      hintedToolCounts.push(turnCalls.length);
+      hintedOrientationCounts.push(orientation.length);
+      orientationAfterHint.total += orientation.length;
+      orientationAfterHint.headAfterHeadHint += orientation.filter((operation) => operation.key === "git.head" && facts.has("git.head")).length;
+      orientationAfterHint.branchAfterBranchHint += orientation.filter((operation) => operation.key === "git.branch.current" && facts.has("git.branch.current")).length;
+      orientationAfterHint.rootAfterRootHint += orientation.filter((operation) => operation.key === "git.root" && facts.has("git.root")).length;
+      orientationAfterHint.fallbackActualReuse += orientation.filter((operation) => operation.actualReuse?.outcome === "actual_reuse").length;
+    } else {
+      unhintedToolCounts.push(turnCalls.length);
+      if (prompt.hintCandidate) controlOrientationCounts.push(orientation.length);
+    }
+  }
+
+  const estimatedChecksAvoided = hintedOrientationCounts.length > 0 && controlOrientationCounts.length > 0
+    ? Number(Math.max(0, (controlOrientationCounts.reduce((a, b) => a + b, 0) / controlOrientationCounts.length - hintedOrientationCounts.reduce((a, b) => a + b, 0) / hintedOrientationCounts.length) * hintedOrientationCounts.length).toFixed(2))
+    : null;
 
   return {
     totalEvents: events.length,
@@ -104,10 +152,25 @@ export function summarizeReflexEvents(events) {
     repeatRate: readOnlyRecognized === 0 ? 0 : Number((repeatedChecks / readOnlyRecognized).toFixed(4)),
     shadowWouldReuse: decisions.would_reuse,
     actualReuse,
-    actualToolCallsSaved,
+    gitSubprocessesAvoided,
+    toolCallsAvoidedByPreToolReuse: 0,
     reuseFallbacks,
     staleAfterMutation: decisions.stale_after_mutation,
     falseReuseErrors: reuseErrors,
+    promptHints: {
+      userPromptsObserved: promptEvents.length,
+      promptsWithHintCandidate: promptEvents.filter((event) => event.hintCandidate).length,
+      promptsWithStateHint: promptEvents.filter((event) => event.hintInjected).length,
+      factsInjected: Object.values(factsInjectedByKind).reduce((sum, value) => sum + value, 0),
+      factsInjectedByKind: top(factsInjectedByKind),
+      hintWindowMs,
+      orientationChecksAfterHint: orientationAfterHint,
+      estimatedChecksAvoided,
+    },
+    toolCallsPerPromptTurn: {
+      withHint: numberSummary(hintedToolCounts),
+      withoutHint: numberSummary(unhintedToolCounts),
+    },
     shadowDecisions: decisions,
     jevShadow: jev,
     potentialSavings: {

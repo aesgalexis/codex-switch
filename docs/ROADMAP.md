@@ -53,8 +53,8 @@ Current client boundary:
 Behavior:
 
 - never block
-- never rewrite
-- never reuse
+- observation itself does not rewrite or reuse; the later Phase 3 pilot adds
+  the narrowly scoped applied behavior
 
 Success criterion:
 
@@ -94,7 +94,7 @@ Current behavior:
 
 - observe and persist evidence
 - calculate dry-run decisions showing when a call *could* have been reused
-- always execute the original tool call
+- execute the original tool call except for the three Phase 3 pilot commands
 
 Success criterion:
 
@@ -160,13 +160,17 @@ Jev saves additional checks without becoming a second agent.
 
 ## Phase 5 - prompt-time state hinting
 
+Status: initial reversible experiment implemented.
+
 Goal: reduce re-orientation before Codex even chooses a tool.
 
-Experiment with `UserPromptSubmit`:
+Implemented with `UserPromptSubmit`:
 
 - select only relevant fresh facts
-- inject tiny additional context
-- measure whether redundant checks decrease
+- emit the documented `additionalContext` hook output in `inject` mode
+- support `off | observe | inject`, defaulting conservatively to `observe`
+- correlate injected facts with subsequent orientation checks and fallback reuse
+- compare turns with and without hints as real CLI data accumulates
 
 Do not inject the entire evidence store.
 
@@ -220,9 +224,9 @@ Then expand one behavior at a time.
 
 ## Immediate next objective
 
-1. Collect real CLI usage without changing tool behavior.
-2. Audit classifier misses, redaction, provenance, and generation invalidation.
-3. Validate deterministic and Jev decisions in shadow form.
-4. Only then avoid a tiny set of demonstrably redundant checks.
+1. Collect comparable CLI turns with prompt hints off/observed and injected.
+2. Measure whether HEAD, branch, and root orientation checks actually decrease.
+3. Audit classifier misses, redaction, provenance, and generation invalidation.
+4. Keep applied reuse limited to the three deterministic pilot commands.
 5. Keep Jev limited to bounded semantic decisions where deterministic local
    facts cannot decide safely.

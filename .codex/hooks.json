@@ -1,6 +1,20 @@
 {
   "description": "Observe Bash checks, invalidate on edits, and reuse three deterministic Git facts.",
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --env-file-if-exists=\"$(git rev-parse --show-toplevel)/.env\" \"$(git rev-parse --show-toplevel)/src/hooks/reflex-hook.js\"",
+            "commandWindows": "$root = (git rev-parse --show-toplevel).Trim(); node \"--env-file-if-exists=$root\\.env\" (Join-Path $root 'src/hooks/reflex-hook.js')",
+            "timeout": 5,
+            "statusMessage": "Loading fresh workspace facts",
+            "additionalContextLimit": 500
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "^(Bash|apply_patch|Edit|Write)$",

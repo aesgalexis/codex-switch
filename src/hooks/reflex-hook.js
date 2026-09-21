@@ -1,5 +1,6 @@
 import { classifyBashCommand } from "../reflex/classify.js";
 import { appendReflexEvent, hashIdentifier } from "../reflex/events.js";
+import { promptHintMode, selectPromptHint, userPromptHookOutput } from "../reflex/hints.js";
 import { commandPattern, fingerprint, redactCommand } from "../reflex/privacy.js";
 import { preToolUseRewrite, safePlanActualReuse } from "../reflex/reuse.js";
 import { advanceGeneration, consumePending, evidenceFromObservation, readReflexState, recordPending, writeReflexState } from "../reflex/state.js";
@@ -51,7 +52,7 @@ async function main() {
   if (!raw.trim()) return;
   const input = JSON.parse(raw);
   const eventName = input?.hook_event_name;
-  if (eventName !== "PreToolUse" && eventName !== "PostToolUse") return;
+  if (!["PreToolUse", "PostToolUse", "UserPromptSubmit"].includes(eventName)) return;
 
   const toolName = typeof input?.tool_name === "string" ? input.tool_name : "unknown";
   const command = toolName === "Bash" && typeof input?.tool_input?.command === "string" ? input.tool_input.command : null;
@@ -63,6 +64,35 @@ async function main() {
   const state = await readReflexState(workspaceId);
   state.workspaceId = workspaceId;
   const generationBefore = state.workspaceGeneration;
+
+  if (eventName === "UserPromptSubmit") {
+    const mode = promptHintMode();
+    let hint = { facts: [], text: null };
+    try {
+      hint = mode === "off" ? hint : selectPromptHint(state, { session, prompt: input?.prompt });
+    } catch {
+      hint = { facts: [], text: null };
+    }
+    const injected = mode === "inject" && Boolean(hint.text);
+    await appendReflexEvent({
+      schema: 2,
+      at: new Date().toISOString(),
+      event: eventName,
+      session,
+      turn: hashIdentifier(input?.turn_id),
+      workspaceId,
+      workspaceGeneration: state.workspaceGeneration,
+      promptFingerprint: fingerprint(input?.prompt),
+      promptLength: typeof input?.prompt === "string" ? input.prompt.length : 0,
+      hintMode: mode,
+      hintCandidate: hint.facts.length > 0,
+      hintInjected: injected,
+      hintFacts: hint.facts.map((fact) => fact.kind),
+      hintBytes: injected ? Buffer.byteLength(hint.text) : 0,
+    });
+    return injected ? userPromptHookOutput(hint.text) : null;
+  }
+
   const operations = classification.operations.map(operationTelemetry);
   let hookResponse = null;
   let actualReuseDelivery = null;

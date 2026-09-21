@@ -14,7 +14,7 @@
     "test": "node --test",
     "reflex:stats": "node src/reflex/report.js",
     "repo:publish": "node scripts/repo-publish.mjs",
-    "check": "node --check src/config.js && node --check src/request.js && node --check src/router.js && node --check src/server.js && node --check src/stats.js && node --check src/upstream.js && node --check src/reflex/classify.js && node --check src/reflex/events.js && node --check src/reflex/privacy.js && node --check src/reflex/state.js && node --check src/reflex/reuse.js && node --check src/reflex/shadow.js && node --check src/reflex/stats.js && node --check src/reflex/report.js && node --check src/hooks/reflex-hook.js && node --check scripts/repo-publish.mjs && node --test"
+    "check": "node --check src/config.js && node --check src/request.js && node --check src/router.js && node --check src/server.js && node --check src/stats.js && node --check src/upstream.js && node --check src/reflex/classify.js && node --check src/reflex/events.js && node --check src/reflex/privacy.js && node --check src/reflex/state.js && node --check src/reflex/reuse.js && node --check src/reflex/hints.js && node --check src/reflex/shadow.js && node --check src/reflex/stats.js && node --check src/reflex/report.js && node --check src/hooks/reflex-hook.js && node --check scripts/repo-publish.mjs && node --test"
   },
   "repository": {
     "type": "git",

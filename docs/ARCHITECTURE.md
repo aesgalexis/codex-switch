@@ -97,15 +97,20 @@ Intended responsibilities:
 
 ### UserPromptSubmit
 
-Later optimization only.
+Initial reversible optimization.
 
-Potential use:
+Current behavior:
 
-- select a few relevant fresh facts for the new user request
-- inject those facts as small additional context
-- avoid dumping the whole evidence store into context
+- select only valid same-session, same-workspace, same-generation repo root,
+  branch, and HEAD facts
+- apply a short age bound in addition to generation checks
+- emit the documented `hookSpecificOutput.additionalContext` response in
+  `inject` mode
+- compute the same candidate without changing context in `observe` mode
+- omit the hint entirely on missing, stale, mismatched, or malformed evidence
 
-This should be added only after PreToolUse/PostToolUse behavior is measured.
+Prompt text, transcripts, file contents, commands, logs, and evidence-store
+dumps are never included. Selection is deterministic; Jev is not in this path.
 
 ## Evidence model
 
@@ -277,10 +282,18 @@ Useful measurements:
 - errors/fail-open events
 - estimated tool calls avoided
 - false reuse reports found during manual review
+- user prompts and prompt-hint candidates/injections
+- injected facts followed by matching orientation checks
+- fallback PreToolUse reuse after a hint
+- per-prompt tool calls and estimated avoided checks when both cohorts exist
+- Git subprocesses avoided by deterministic fallback, kept distinct from outer
+  tool calls (which that fallback cannot avoid)
 
 The first milestone should optimize observability before optimization.
 
 The observer is already producing real local telemetry. Its first captured
 same-session repeat was `git rev-parse HEAD` after 124.707 seconds. Results are
-now cached locally as evidence and evaluated in shadow mode, but no tool call is
-currently blocked, rewritten, skipped, or served from that cache.
+cached locally as evidence and evaluated in shadow mode. Three exact Git facts
+also have an applied PreToolUse rewrite that avoids their subprocess while
+retaining the outer Bash tool call. Prompt hints are a separate experiment aimed
+at preventing that outer orientation call before it is chosen.

@@ -109,7 +109,7 @@ The intended integration is:
 
 - `PreToolUse`: inspect a pending local tool call and decide whether fresh evidence can satisfy it.
 - `PostToolUse`: observe completed tool results and update the evidence store.
-- `UserPromptSubmit`: later, inject a tiny amount of relevant fresh state before Codex starts re-orienting itself.
+- `UserPromptSubmit`: optionally inject a tiny amount of relevant fresh state before Codex starts re-orienting itself.
 
 Hooks remain a useful optimization layer, not a security boundary.
 
@@ -166,6 +166,8 @@ The **Phase 1 observer / Phase 2 evidence layer / Phase 3 reuse pilot** now prov
   `stale_after_mutation`, `not_eligible`, and `unknown`
 - real deterministic reuse for exactly `git rev-parse HEAD`,
   `git branch --show-current`, and `git rev-parse --show-toplevel`
+- prompt-time state hints for fresh repo root, branch, and HEAD evidence, with
+  explicit `off | observe | inject` modes and conservative `observe` default
 - optional Jev shadow judgments (`reuse | refresh | uncertain`) for bounded
   semantic sufficiency cases
 - richer repetition, coverage, unknown-family, mutation, and potential-savings
@@ -214,23 +216,23 @@ Model routing is now a **secondary module**, not the main purpose.
 
 ### Next implementation
 
-The immediate goal is to collect more real CLI usage and validate the new
-shadow decisions. The deterministic evidence path now has an initial local
-implementation; the remaining milestone is to prove it safe:
+The immediate goal is to measure whether prompt-time facts prevent orientation
+calls, while continuing to validate shadow decisions and applied reuse:
 
 1. collect a larger real-session sample
 2. review classification and redaction misses
 3. validate generation changes after potentially mutating operations
 4. review deterministic and Jev shadow decisions
-5. only then begin avoiding proven-redundant checks
+5. compare prompt turns with and without injected hints
 6. reserve Jev `reuse | refresh | uncertain` judgments for semantic cases where
    local deterministic facts are not sufficient
 
 See [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Reflex observer quick start
+## Reflex layer quick start
 
-The first reflex milestone only observes. It never blocks or rewrites a Codex tool call.
+Most operations remain observational. Applied behavior is limited to the three
+exact deterministic Git rewrites and the optional prompt hint described below.
 
 Project hooks live in `.codex/hooks.json`. Codex must trust the project hook layer before those hooks will run.
 
@@ -260,6 +262,32 @@ same-generation evidence is reused through the official `PreToolUse`
 rewritten shell command prints the validated cached scalar, with the original
 Git command as fallback. This avoids the redundant Git subprocess; it does not
 remove the surrounding Codex Bash tool call.
+
+`UserPromptSubmit` can add a separate preventive layer. Set
+`MODEL_SWITCH_PROMPT_HINT_MODE=inject` to provide a short official
+`additionalContext` block containing only valid same-session, same-generation
+repo root, branch, and HEAD facts. The default `observe` mode computes the
+candidate without changing model context; `off` disables it. Facts older than
+`MODEL_SWITCH_PROMPT_HINT_MAX_AGE_MS` are excluded. This may prevent Codex from
+choosing an orientation tool call; unlike the PreToolUse fallback, such a
+prevention would save the outer tool call as well as its Git subprocess.
+
+The contract is documented in the official [Codex hooks documentation](https://learn.chatgpt.com/docs/hooks):
+`UserPromptSubmit` accepts `hookSpecificOutput.additionalContext`, which is
+added as extra developer context for the model. This adds a small number of
+input tokens; it saves tokens or tool calls only when Codex consequently avoids
+an otherwise redundant check.
+
+The first controlled CLI injection delivered all three facts. Codex then made
+one task-relevant file-read call and no HEAD, branch, or root checks. This is a
+successful mechanism test, not yet causal proof: the sample has one injected
+turn, so `estimatedChecksAvoided` remains `null` until comparable control and
+injected cohorts exist.
+
+`npm run reflex:stats` reports deterministic fallback savings as
+`gitSubprocessesAvoided`; `toolCallsAvoidedByPreToolReuse` is always zero because
+that fallback still executes the surrounding Bash call. Prompt-level avoided
+checks are estimated separately only when both cohorts are available.
 
 Every operation not proven read-only advances `workspaceGeneration` after
 `PostToolUse`. This includes known mutations, unknown commands, unsafe shell

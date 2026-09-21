@@ -10,7 +10,7 @@ export function isActualReuseCandidate(operation) {
   return operation?.eligible === true && REUSABLE_COMMANDS.get(operation.command) === operation.key;
 }
 
-function validValue(kind, value) {
+export function isValidReusableValue(kind, value) {
   if (typeof value !== "string" || value.includes("\0") || /[\r\n]/.test(value)) return false;
   if (kind === "git.head") return /^[0-9a-f]{40,64}$/i.test(value);
   if (kind === "git.branch.current") {
@@ -45,7 +45,7 @@ export function planActualReuse(state, { operation, session, commandHash, platfo
   if (evidence.workspace?.id !== state.workspaceId || evidence.repo?.id !== state.workspaceId) {
     return { outcome: "fallback", reason: "workspace_mismatch" };
   }
-  if (!validValue(operation.key, evidence.value)) return { outcome: "fallback", reason: "invalid_evidence" };
+  if (!isValidReusableValue(operation.key, evidence.value)) return { outcome: "fallback", reason: "invalid_evidence" };
   return {
     outcome: "actual_reuse",
     reason: "fresh_deterministic_evidence",
