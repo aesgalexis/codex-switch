@@ -2,50 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { summarizeReflexEvents } from "../src/reflex/stats.js";
 
-test("counts repeated eligible checks within a session", () => {
+test("summarizes operations, repeats, compounds, mutations, and shadow savings", () => {
+  const base = { event: "PreToolUse", session: "abc", family: "git", access: "read-only", potentiallyMutating: false };
   const events = [
-    {
-      event: "PreToolUse",
-      at: "2026-09-21T10:00:00.000Z",
-      session: "abc",
-      eligible: true,
-      commandKey: "git.head",
-    },
-    {
-      event: "PostToolUse",
-      at: "2026-09-21T10:00:00.100Z",
-      session: "abc",
-      eligible: true,
-      commandKey: "git.head",
-    },
-    {
-      event: "PreToolUse",
-      at: "2026-09-21T10:00:05.000Z",
-      session: "abc",
-      eligible: true,
-      commandKey: "git.head",
-    },
-    {
-      event: "PreToolUse",
-      at: "2026-09-21T10:00:06.000Z",
-      session: "different",
-      eligible: true,
-      commandKey: "git.head",
-    }
+    { ...base, at: "2026-09-21T10:00:00.000Z", operations: [{ key: "git.head", family: "git", access: "read-only", eligible: true, commandHash: "head", shadow: { decision: "would_refresh" } }] },
+    { ...base, at: "2026-09-21T10:00:05.000Z", operations: [{ key: "git.head", family: "git", access: "read-only", eligible: true, commandHash: "head", shadow: { decision: "would_reuse" } }] },
+    { ...base, at: "2026-09-21T10:00:06.000Z", compound: true, operations: [{ key: "git.status.short", family: "git", access: "read-only", eligible: true, commandHash: "status", shadow: { decision: "would_refresh" } }] },
+    { event: "PreToolUse", at: "2026-09-21T10:00:07.000Z", session: "abc", access: "unknown", potentiallyMutating: true, commandPattern: "mystery <value>", operations: [{ family: "mystery", access: "unknown", eligible: false, shadow: { decision: "unknown" } }] },
   ];
-
-  assert.deepEqual(summarizeReflexEvents(events), {
-    totalEvents: 4,
-    preToolUseEvents: 3,
-    eligibleChecks: 3,
-    repeatedEligibleChecks: 1,
-    repeatRate: 0.3333,
-    byCommand: { "git.head": 3 },
-    repeatIntervals: {
-      count: 1,
-      minMs: 5000,
-      avgMs: 5000,
-      maxMs: 5000
-    }
-  });
+  const summary = summarizeReflexEvents(events);
+  assert.equal(summary.totalToolCalls, 4);
+  assert.equal(summary.readOnlyRecognized, 3);
+  assert.equal(summary.compoundToolCalls, 1);
+  assert.equal(summary.recognizedInsideCompounds, 1);
+  assert.equal(summary.mutatingToolCalls, 1);
+  assert.equal(summary.unknownToolCalls, 1);
+  assert.equal(summary.repeatedChecks, 1);
+  assert.equal(summary.shadowDecisions.would_reuse, 1);
+  assert.equal(summary.potentialSavings.toolCalls, 1);
+  assert.equal(summary.potentialSavings.reusableOperations, 1);
+  assert.deepEqual(summary.repeatIntervals, { count: 1, minMs: 5000, avgMs: 5000, maxMs: 5000 });
 });
