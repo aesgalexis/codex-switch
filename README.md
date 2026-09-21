@@ -337,6 +337,18 @@ npm test
 npm run check
 ```
 
+To validate, commit all non-ignored repository changes, and push the current
+branch (configuring `origin` as upstream when needed):
+
+```powershell
+npm run repo:publish
+npm run repo:publish -- "Expand reflex observation"
+```
+
+The command aborts before staging when checks fail. It refuses tracked or staged
+`.env`, `.env.*` (except `.env.example`), `.model-switch/`, and `*.log` paths.
+If there are no changes to commit, it still pushes any existing local commits.
+
 ## License
 
 MIT.
