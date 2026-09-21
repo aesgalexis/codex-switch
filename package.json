@@ -1,8 +1,8 @@
 {
   "name": "model-switch",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Minimal local model and reasoning router for OpenAI Codex, powered by TypeSafe Jev.",
+  "description": "Local reflex layer for OpenAI Codex: reuse fresh evidence, gate ambiguous checks with TypeSafe Jev, and optionally route models.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -23,12 +23,14 @@
     "url": "https://github.com/aesgalexis/model-switch/issues"
   },
   "keywords": [
-    "model-routing",
-    "ai-routing",
     "codex",
     "openai",
     "jev",
-    "typesafe"
+    "typesafe",
+    "agent-hooks",
+    "evidence-cache",
+    "semantic-gating",
+    "model-routing"
   ],
   "dependencies": {
     "@typesafe-ai/sdk": "0.6.0"
