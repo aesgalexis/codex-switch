@@ -148,7 +148,7 @@ requested with Sol + High was evaluated by Jev as `gpt-5.6-luna` + `low`.
 The router remains in its safe default `observe` mode, so that recommendation
 was recorded without rewriting the request.
 
-The **Phase 1 observer / early Phase 2 shadow layer** is intentionally passive:
+The **Phase 1 observer / Phase 2 evidence layer / Phase 3 reuse pilot** now provides:
 
 - project-scoped Codex `PreToolUse` and `PostToolUse` hooks for Bash, verified
   in Codex CLI
@@ -164,12 +164,14 @@ The **Phase 1 observer / early Phase 2 shadow layer** is intentionally passive:
 - workspace generations and normalized local evidence with provenance
 - deterministic shadow decisions: `would_reuse`, `would_refresh`,
   `stale_after_mutation`, `not_eligible`, and `unknown`
+- real deterministic reuse for exactly `git rev-parse HEAD`,
+  `git branch --show-current`, and `git rev-parse --show-toplevel`
 - optional Jev shadow judgments (`reuse | refresh | uncertain`) for bounded
   semantic sufficiency cases
 - richer repetition, coverage, unknown-family, mutation, and potential-savings
   metrics via `npm run reflex:stats`
 - fail-open behavior
-- no blocking, rewriting, or reuse yet
+- no blocking; rewriting is limited to the three deterministic reuse commands
 
 Real telemetry is now working. The first repeated check observed within one
 actual session was `git rev-parse HEAD`, repeated after 124.707 seconds
@@ -248,8 +250,23 @@ Recognized operations include explicit Git queries (`status`, `diff`, branch
 queries, `rev-parse`, `log`, `show`, refs and config reads), filesystem reads,
 listings, metadata and searches, Node/npm inspection, and a bounded set of
 read-only external CLI queries. Unknown or potentially mutating commands
-invalidate the current workspace generation conservatively. Phase 1/2 remains
-strictly observational: it does not block, rewrite, skip, or reuse results.
+invalidate the current workspace generation conservatively. All operations
+outside the three exact reuse commands remain observational/shadow-only and are
+never blocked, rewritten, skipped, or served from evidence.
+
+For the three exact deterministic commands, fresh same-session, same-workspace,
+same-generation evidence is reused through the official `PreToolUse`
+`permissionDecision: "allow"` plus `updatedInput.command` mechanism. The
+rewritten shell command prints the validated cached scalar, with the original
+Git command as fallback. This avoids the redundant Git subprocess; it does not
+remove the surrounding Codex Bash tool call.
+
+Every operation not proven read-only advances `workspaceGeneration` after
+`PostToolUse`. This includes known mutations, unknown commands, unsafe shell
+structures, `apply_patch`/Edit/Write operations, tests, builds, deploys, and
+external writes. This conservative rule may invalidate HEAD more often than
+necessary, but prevents reuse across a possible commit, checkout, reset, merge,
+or rebase.
 
 When `TYPESAFE_API_KEY` is available, the hook may ask Jev one bounded semantic
 question for related evidence in shadow mode. Jev never receives command output,
@@ -322,6 +339,8 @@ command diagnostics are redacted for common credentials and remain under the
 Git-ignored `.model-switch/` directory; tool-response contents are not written
 to the event log. Evidence stores safe scalar values only for a small set of
 facts and fingerprints other outputs.
+
+Jev remains shadow-only and can never authorize an applied reuse.
 
 ## References
 

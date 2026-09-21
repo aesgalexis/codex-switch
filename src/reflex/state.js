@@ -44,15 +44,20 @@ export function advanceGeneration(state, potentiallyMutating) {
   return state.workspaceGeneration;
 }
 
-export function recordPending(state, toolUse, at = new Date().toISOString()) {
+export function recordPending(state, toolUse, at = new Date().toISOString(), metadata = {}) {
   if (!toolUse) return;
   state.pending ??= {};
-  state.pending[toolUse] = { workspaceGeneration: state.workspaceGeneration, at };
+  state.pending[toolUse] = { workspaceGeneration: state.workspaceGeneration, at, ...metadata };
+}
+
+export function consumePending(state, toolUse) {
+  const pending = toolUse ? state.pending?.[toolUse] ?? null : null;
+  if (toolUse && state.pending) delete state.pending[toolUse];
+  return pending;
 }
 
 export function consumePendingGeneration(state, toolUse) {
-  const generation = toolUse ? state.pending?.[toolUse]?.workspaceGeneration : null;
-  if (toolUse && state.pending) delete state.pending[toolUse];
+  const generation = consumePending(state, toolUse)?.workspaceGeneration;
   return Number.isInteger(generation) ? generation : state.workspaceGeneration;
 }
 

@@ -1,7 +1,8 @@
 import { classifyBashCommand } from "../reflex/classify.js";
 import { appendReflexEvent, hashIdentifier } from "../reflex/events.js";
 import { commandPattern, fingerprint, redactCommand } from "../reflex/privacy.js";
-import { advanceGeneration, consumePendingGeneration, evidenceFromObservation, readReflexState, recordPending, writeReflexState } from "../reflex/state.js";
+import { preToolUseRewrite, safePlanActualReuse } from "../reflex/reuse.js";
+import { advanceGeneration, consumePending, evidenceFromObservation, readReflexState, recordPending, writeReflexState } from "../reflex/state.js";
 import { deterministicShadow, semanticShadow } from "../reflex/shadow.js";
 
 async function readStdin() {
@@ -63,14 +64,33 @@ async function main() {
   state.workspaceId = workspaceId;
   const generationBefore = state.workspaceGeneration;
   const operations = classification.operations.map(operationTelemetry);
+  let hookResponse = null;
+  let actualReuseDelivery = null;
 
   if (eventName === "PreToolUse") {
-    recordPending(state, toolUse);
     let jevAttempted = false;
+    let pendingMetadata = {};
     for (let index = 0; index < classification.operations.length; index += 1) {
       const operation = classification.operations[index];
       const commandHash = operations[index].commandHash;
       operations[index].shadow = deterministicShadow(state, { operation, session, commandHash });
+      if (!classification.compound && classification.operations.length === 1) {
+        {
+          const reuse = safePlanActualReuse(state, { operation, session, commandHash });
+          if (reuse.outcome !== "not_candidate") {
+            operations[index].actualReuse = {
+              outcome: reuse.outcome,
+              reason: reuse.reason,
+              evidenceGeneration: reuse.evidenceGeneration ?? null,
+              evidenceTimestamp: reuse.evidenceTimestamp ?? null,
+            };
+          }
+          if (reuse.outcome === "actual_reuse") {
+            pendingMetadata = { actualReuse: { key: reuse.key, evidenceGeneration: reuse.evidenceGeneration } };
+            hookResponse = preToolUseRewrite(reuse.updatedCommand);
+          }
+        }
+      }
       if (!jevAttempted && operations[index].shadow.decision === "would_refresh") {
         const semantic = await semanticShadow(state, { operation, session, commandHash });
         if (semantic) {
@@ -79,12 +99,18 @@ async function main() {
         }
       }
     }
+    recordPending(state, toolUse, new Date().toISOString(), pendingMetadata);
     await writeReflexState(state);
   } else {
     const response = input?.tool_response;
-    const observationGeneration = consumePendingGeneration(state, toolUse);
-    advanceGeneration(state, classification.potentiallyMutating);
-    if (!classification.compound && classification.operations.length === 1 && classification.operations[0].eligible && responseSucceeded(response)) {
+    const pending = consumePending(state, toolUse);
+    const observationGeneration = Number.isInteger(pending?.workspaceGeneration) ? pending.workspaceGeneration : state.workspaceGeneration;
+    const reused = Boolean(pending?.actualReuse);
+    if (reused) {
+      actualReuseDelivery = { ...pending.actualReuse, success: responseSucceeded(response) };
+    }
+    advanceGeneration(state, reused ? false : classification.potentiallyMutating);
+    if (!reused && !classification.compound && classification.operations.length === 1 && classification.operations[0].eligible && responseSucceeded(response)) {
       state.evidence.push(evidenceFromObservation({
         operation: classification.operations[0], command: classification.operations[0].command,
         output: responseOutput(response), at: new Date().toISOString(), session, tool: toolName,
@@ -108,8 +134,9 @@ async function main() {
     access: classification.access ?? "unknown",
     compound: classification.compound,
     safeCompound: classification.safeCompound,
-    potentiallyMutating: classification.potentiallyMutating,
+    potentiallyMutating: actualReuseDelivery ? false : classification.potentiallyMutating,
     operations,
+    actualReuseDelivery,
     generationBefore,
     generationAfter: state.workspaceGeneration,
     session,
@@ -118,10 +145,12 @@ async function main() {
     permissionMode: typeof input?.permission_mode === "string" ? input.permission_mode : null,
     responseShape: eventName === "PostToolUse" ? responseShape(input?.tool_response) : null,
   });
+  return hookResponse;
 }
 
 try {
-  await main();
+  const response = await main();
+  if (response) process.stdout.write(JSON.stringify(response));
 } catch {
   // Observation and shadow hooks must always fail open.
 }

@@ -103,7 +103,19 @@ generation invalidation, and redaction behavior are correct.
 
 ## Phase 3 - safe reuse
 
+Status: first conservative pilot implemented.
+
 Goal: actually avoid a tiny set of redundant deterministic checks.
+
+Enabled only for exact repeats of:
+
+- `git rev-parse HEAD`
+- `git branch --show-current`
+- `git rev-parse --show-toplevel`
+
+The implementation uses the supported `PreToolUse` `updatedInput.command`
+mechanism to replace the redundant Git query with a shell-native output command.
+All other commands remain observe/shadow-only.
 
 Enable reuse only for calls with:
 

@@ -1,9 +1,9 @@
 {
-  "description": "Observe repeated read-only Bash checks while developing the model-switch reflex layer.",
+  "description": "Observe Bash checks, invalidate on edits, and reuse three deterministic Git facts.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^Bash$",
+        "matcher": "^(Bash|apply_patch|Edit|Write)$",
         "hooks": [
           {
             "type": "command",
@@ -17,7 +17,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "^Bash$",
+        "matcher": "^(Bash|apply_patch|Edit|Write)$",
         "hooks": [
           {
             "type": "command",

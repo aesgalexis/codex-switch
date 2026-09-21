@@ -37,6 +37,10 @@ export function summarizeReflexEvents(events) {
   let recognizedInsideCompounds = 0;
   let repeatedChecks = 0;
   let potentiallyReusableCalls = 0;
+  let actualReuse = 0;
+  let reuseFallbacks = 0;
+  let reuseErrors = 0;
+  const actualReuseByCommand = {};
 
   for (const event of preEvents) {
     const operations = eventOperations(event);
@@ -65,6 +69,13 @@ export function summarizeReflexEvents(events) {
         if (Number.isFinite(atMs)) lastSeen.set(scope, atMs);
       }
       if (operation.shadow?.decision && operation.shadow.decision in decisions) decisions[operation.shadow.decision] += 1;
+      if (operation.actualReuse?.outcome === "actual_reuse") {
+        actualReuse += 1;
+        bump(actualReuseByCommand, operation.key);
+      } else if (operation.actualReuse?.outcome === "fallback") {
+        reuseFallbacks += 1;
+        if (operation.actualReuse.reason === "internal_error") reuseErrors += 1;
+      }
       const semantic = operation.semanticShadow;
       if (semantic) {
         if (semantic.source === "jev-disabled") jev.disabled += 1;
@@ -77,6 +88,10 @@ export function summarizeReflexEvents(events) {
     )) potentiallyReusableCalls += 1;
   }
 
+  const reuseDeliveries = events.filter((event) => event?.event === "PostToolUse" && event?.actualReuseDelivery);
+  const actualToolCallsSaved = reuseDeliveries.filter((event) => event.actualReuseDelivery.success).length;
+  reuseErrors += reuseDeliveries.filter((event) => !event.actualReuseDelivery.success).length;
+
   return {
     totalEvents: events.length,
     totalToolCalls: preEvents.length,
@@ -87,6 +102,12 @@ export function summarizeReflexEvents(events) {
     recognizedInsideCompounds,
     repeatedChecks,
     repeatRate: readOnlyRecognized === 0 ? 0 : Number((repeatedChecks / readOnlyRecognized).toFixed(4)),
+    shadowWouldReuse: decisions.would_reuse,
+    actualReuse,
+    actualToolCallsSaved,
+    reuseFallbacks,
+    staleAfterMutation: decisions.stale_after_mutation,
+    falseReuseErrors: reuseErrors,
     shadowDecisions: decisions,
     jevShadow: jev,
     potentialSavings: {
@@ -95,6 +116,7 @@ export function summarizeReflexEvents(events) {
       percentOfObservedCalls: preEvents.length === 0 ? 0 : Number(((potentiallyReusableCalls / preEvents.length) * 100).toFixed(2)),
     },
     byCommand: top(byCommand),
+    actualReuseByCommand: top(actualReuseByCommand),
     topCommandFamilies: top(families),
     topUnknownPatterns: top(unknownPatterns),
     repeatIntervals: intervalSummary(repeatIntervals),

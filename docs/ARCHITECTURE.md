@@ -60,10 +60,10 @@ model-switch should reduce redundant orientation work, not replace Codex.
 
 ## Hook lifecycle
 
-Phase 1 and the initial Phase 2 shadow layer implement the `PreToolUse` and
-`PostToolUse` points below for Bash in Codex CLI. The observer records metadata,
-maintains local evidence and generations, and always allows the original
-operation unchanged.
+Phase 1, the Phase 2 shadow layer, and the narrow Phase 3 reuse pilot implement
+the `PreToolUse` and `PostToolUse` points below for Bash in Codex CLI. The layer
+records metadata, maintains local evidence and generations, and rewrites only
+three exact deterministic Git queries. Every other operation remains unchanged.
 
 Codex Desktop currently sends shell work through a specialized
 `custom_tool_call: exec` route that does not traverse this lifecycle hook path.
@@ -79,7 +79,9 @@ Intended responsibilities:
 2. check whether exact same-session, same-generation evidence already answers it
 3. emit a deterministic shadow decision
 4. optionally ask Jev one bounded sufficiency question for related evidence
-5. always allow the original tool call unchanged
+5. for three exact deterministic Git facts only, return `permissionDecision:
+   "allow"` with `updatedInput.command` that emits validated evidence
+6. otherwise allow the original tool call unchanged
 
 Initial eligible surface should be tiny and read-only.
 
@@ -169,6 +171,30 @@ only requested/prior evidence kinds, command family, evidence age, and the fact
 that both observations share a workspace generation. It uses a conservative
 confidence threshold, short timeout, no retries, and returns `uncertain` on any
 failure. Its answer is recorded but never applied to the tool call.
+
+## Deterministic reuse pilot
+
+Applied reuse is restricted to exact simple commands for HEAD, current branch,
+and repository root. Evidence must match session, workspace/repository identity,
+exact normalized command hash, and `workspaceGeneration`; scalar values are
+validated again before use. Compounds are never rewritten.
+
+The project hook matcher also observes `apply_patch`/Edit/Write. Those operations,
+known mutating Bash commands, unknown commands, and unsafe shell structures all
+advance the generation on `PostToolUse`. This pilot intentionally uses a single
+conservative generation instead of trying to prove which mutations can change
+HEAD, branch, or repository identity.
+
+Codex hooks do not currently expose a supported way for `PreToolUse` to inject a
+complete synthetic Bash result without a tool execution. The pilot therefore
+uses the supported input-rewrite contract: on Windows it substitutes a guarded
+`Write-Output`, and on POSIX a guarded `printf`. Codex receives ordinary tool
+stdout while the redundant Git subprocess is avoided. If planning throws or any
+condition is uncertain, the hook emits no rewrite and Codex executes the original
+Git command.
+
+Jev is excluded from this applied path. Its semantic decisions remain telemetry
+only.
 
 Example input:
 
