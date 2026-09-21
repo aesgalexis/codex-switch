@@ -139,7 +139,20 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### Implemented today
 
-The repository currently contains the original **model + reasoning router prototype**:
+The repository now has two independent experimental paths.
+
+The **Phase 1 reflex observer** is intentionally passive:
+
+- project-scoped Codex `PreToolUse` and `PostToolUse` hooks for Bash
+- a tiny allowlist of read-only orientation checks
+- semantic command keys instead of raw command logging
+- hashed session, turn, and tool-use identifiers
+- no tool-response contents in the log
+- repetition metrics via `npm run reflex:stats`
+- fail-open behavior
+- no blocking, rewriting, or reuse yet
+
+The original **model + reasoning router prototype** also remains available:
 
 ```text
 Codex Desktop / CLI
@@ -163,21 +176,36 @@ It supports:
 - local statistics
 - normal ChatGPT/Codex authentication forwarding
 
-This code is staying in the project, but model routing is now a **secondary module**, not the main purpose.
+Model routing is now a **secondary module**, not the main purpose.
 
 ### Next implementation
 
-The next milestone is the reflex path:
+The next milestone is the deterministic evidence path:
 
-1. local evidence store
-2. `PostToolUse` observation for a tiny allowlist of read-only Bash/Git checks
-3. `PreToolUse` duplicate-check detection
-4. deterministic reuse without Jev where possible
-5. Jev `reuse | refresh | uncertain` gate where semantics are required
-6. metrics comparing avoided checks vs fallbacks
-7. only then consider `UserPromptSubmit` context injection
+1. persist normalized results for the tiny read-only allowlist
+2. add repo identity and workspace generation
+3. invalidate evidence after potentially mutating operations
+4. dry-run exact reuse decisions
+5. manually review those decisions before suppressing any tool call
+6. only then add Jev `reuse | refresh | uncertain` judgments for semantic cases
 
 See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Reflex observer quick start
+
+The first reflex milestone only observes. It never blocks or rewrites a Codex tool call.
+
+Project hooks live in `.codex/hooks.json`. Codex must trust the project hook layer before those hooks will run.
+
+Use Codex normally inside this repository, then inspect what repeated orientation checks were observed:
+
+```powershell
+npm run reflex:stats
+```
+
+The local event log is written to `.model-switch/reflex-events.jsonl` by default and is ignored by Git. Set `MODEL_SWITCH_REFLEX_LOG` to override the path.
+
+The initial allowlist recognizes only simple read-only checks such as repository root, branch, HEAD, selected Git status forms, and `pwd`. Compound, piped, redirected, unknown, or potentially mutating shell commands are never eligible.
 
 ## Existing router quick start
 
