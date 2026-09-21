@@ -9,8 +9,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
+    "start": "node --env-file=.env src/server.js",
+    "dev": "node --env-file=.env --watch src/server.js",
     "test": "node --test",
     "check": "node --check src/config.js && node --check src/request.js && node --check src/router.js && node --check src/server.js && node --check src/stats.js && node --check src/upstream.js && node --test"
   },
