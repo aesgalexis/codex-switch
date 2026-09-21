@@ -6,3 +6,4 @@ coverage/
 *.log
 .DS_Store
 .model-switch/
+# Local reflex telemetry; retained here explicitly via its parent directory.

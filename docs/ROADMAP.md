@@ -21,7 +21,8 @@ Do not expand model routing until the reflex path is working.
 
 ## Phase 1 - observe hooks
 
-Status: initial implementation complete; real Codex-session measurement is next.
+Status: initial implementation complete and producing real Codex CLI telemetry;
+continued real-session measurement is next.
 
 Implemented:
 
@@ -33,6 +34,21 @@ Implemented:
 - hashed session, turn, and tool-use identifiers
 - no tool-response contents
 - repetition counts and timing metrics via `npm run reflex:stats`
+- verified Windows hook command for Codex CLI
+
+Observed in real use:
+
+- the first same-session repeated check was `git rev-parse HEAD`
+- the repeat interval was 124.707 seconds (approximately 125 seconds)
+- compound commands passed through and remained ineligible
+
+Current client boundary:
+
+- Codex CLI traverses the Bash `PreToolUse` and `PostToolUse` lifecycle used by
+  the observer
+- Codex Desktop currently uses a specialized `custom_tool_call: exec` route
+  that does not traverse this lifecycle path, so reliable Phase 1 measurement
+  is being performed in CLI
 
 Behavior:
 
@@ -42,7 +58,9 @@ Behavior:
 
 Success criterion:
 
-Run normal Codex sessions and answer: which orientation checks Codex repeats, how often, and how close together?
+Collect enough normal CLI sessions to answer which orientation checks Codex
+repeats, how often, and how close together. One real repeat has already been
+captured; broader usage is still needed before reuse is implemented.
 
 ## Phase 2 - deterministic evidence store
 
@@ -177,3 +195,12 @@ The first useful demo should be deliberately boring:
 6. model-switch returns/reuses it without another subprocess.
 
 Then expand one behavior at a time.
+
+## Immediate next objective
+
+1. Collect real CLI usage without changing tool behavior.
+2. Build deterministic evidence with provenance and invalidation.
+3. Validate proposed reuse decisions in dry-run form.
+4. Only then avoid a tiny set of demonstrably redundant checks.
+5. Use Jev later for bounded semantic decisions where deterministic local facts
+   cannot decide safely.

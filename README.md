@@ -141,16 +141,37 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 The repository now has two independent experimental paths.
 
+TypeSafe Jev is working locally through `@typesafe-ai/sdk`, and the official
+project-scoped `typesafe-ai` skill is installed under
+`.agents/skills/typesafe-ai`. In a real router observation, a trivial task
+requested with Sol + High was evaluated by Jev as `gpt-5.6-luna` + `low`.
+The router remains in its safe default `observe` mode, so that recommendation
+was recorded without rewriting the request.
+
 The **Phase 1 reflex observer** is intentionally passive:
 
-- project-scoped Codex `PreToolUse` and `PostToolUse` hooks for Bash
-- a tiny allowlist of read-only orientation checks
+- project-scoped Codex `PreToolUse` and `PostToolUse` hooks for Bash, verified
+  in Codex CLI
+- a tiny allowlist of read-only orientation checks: repository root, current
+  branch, HEAD, selected Git status forms, and `pwd`
 - semantic command keys instead of raw command logging
 - hashed session, turn, and tool-use identifiers
 - no tool-response contents in the log
 - repetition metrics via `npm run reflex:stats`
 - fail-open behavior
 - no blocking, rewriting, or reuse yet
+
+Real telemetry is now working. The first repeated check observed within one
+actual session was `git rev-parse HEAD`, repeated after 124.707 seconds
+(approximately 125 seconds). Compound commands are allowed to run unchanged
+but are deliberately not eligible for reflex handling yet.
+
+There is currently an integration difference between Codex clients. Codex CLI
+invokes Bash through the `PreToolUse`/`PostToolUse` lifecycle path used by this
+observer. Codex Desktop currently executes these shell operations through its
+specialized `custom_tool_call: exec` path, which does not traverse this hook
+lifecycle. Reliable reflex telemetry is therefore being measured in CLI for
+now; Desktop support is not claimed yet.
 
 The original **model + reasoning router prototype** also remains available:
 
@@ -180,14 +201,17 @@ Model routing is now a **secondary module**, not the main purpose.
 
 ### Next implementation
 
-The next milestone is the deterministic evidence path:
+The immediate goal is to collect more real CLI usage. After that, the next
+milestone is the deterministic evidence path:
 
 1. persist normalized results for the tiny read-only allowlist
 2. add repo identity and workspace generation
 3. invalidate evidence after potentially mutating operations
 4. dry-run exact reuse decisions
 5. manually review those decisions before suppressing any tool call
-6. only then add Jev `reuse | refresh | uncertain` judgments for semantic cases
+6. only then begin avoiding proven-redundant checks
+7. reserve Jev `reuse | refresh | uncertain` judgments for semantic cases where
+   local deterministic facts are not sufficient
 
 See [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -197,7 +221,8 @@ The first reflex milestone only observes. It never blocks or rewrites a Codex to
 
 Project hooks live in `.codex/hooks.json`. Codex must trust the project hook layer before those hooks will run.
 
-Use Codex normally inside this repository, then inspect what repeated orientation checks were observed:
+Use Codex CLI normally inside this repository, then inspect what repeated
+orientation checks were observed:
 
 ```powershell
 npm run reflex:stats
@@ -205,7 +230,11 @@ npm run reflex:stats
 
 The local event log is written to `.model-switch/reflex-events.jsonl` by default and is ignored by Git. Set `MODEL_SWITCH_REFLEX_LOG` to override the path.
 
-The initial allowlist recognizes only simple read-only checks such as repository root, branch, HEAD, selected Git status forms, and `pwd`. Compound, piped, redirected, unknown, or potentially mutating shell commands are never eligible.
+The initial allowlist recognizes only simple read-only checks such as repository
+root, branch, HEAD, selected Git status forms, and `pwd`. Compound, piped,
+redirected, unknown, or potentially mutating shell commands pass through and
+are never eligible. Phase 1 is strictly observational: it does not block,
+rewrite, or reuse results.
 
 ## Existing router quick start
 

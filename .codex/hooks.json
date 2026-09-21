@@ -8,7 +8,7 @@
           {
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/src/hooks/reflex-hook.js\"",
-            "commandWindows": "powershell -NoProfile -Command \"$root = (git rev-parse --show-toplevel).Trim(); node (Join-Path $root 'src/hooks/reflex-hook.js')\"",
+            "commandWindows": "node (Join-Path (git rev-parse --show-toplevel).Trim() 'src/hooks/reflex-hook.js')",
             "timeout": 5,
             "statusMessage": "Observing reflex candidate"
           }
@@ -22,7 +22,7 @@
           {
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/src/hooks/reflex-hook.js\"",
-            "commandWindows": "powershell -NoProfile -Command \"$root = (git rev-parse --show-toplevel).Trim(); node (Join-Path $root 'src/hooks/reflex-hook.js')\"",
+            "commandWindows": "node (Join-Path (git rev-parse --show-toplevel).Trim() 'src/hooks/reflex-hook.js')",
             "timeout": 5,
             "statusMessage": "Recording reflex observation"
           }

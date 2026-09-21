@@ -60,6 +60,15 @@ model-switch should reduce redundant orientation work, not replace Codex.
 
 ## Hook lifecycle
 
+Phase 1 currently implements the `PreToolUse` and `PostToolUse` observation
+points below for Bash in Codex CLI. The observer records metadata only and
+always allows the original operation unchanged.
+
+Codex Desktop currently sends shell work through a specialized
+`custom_tool_call: exec` route that does not traverse this lifecycle hook path.
+Accordingly, CLI is the supported measurement environment for reliable reflex
+telemetry at this stage.
+
 ### PreToolUse
 
 Intended responsibilities:
@@ -142,7 +151,10 @@ Examples:
 - selected `git status` forms
 - selected read-only comparisons once semantics are well understood
 
-Unknown, compound, redirected, piped, or potentially mutating shell commands should pass through untouched.
+Unknown, compound, redirected, piped, or potentially mutating shell commands
+pass through untouched and are not eligible. The current implemented allowlist
+covers `pwd`, repository root, current branch, HEAD, and selected Git status
+forms.
 
 ## Jev gate
 
@@ -231,3 +243,7 @@ Useful measurements:
 - false reuse reports found during manual review
 
 The first milestone should optimize observability before optimization.
+
+The observer is already producing real local telemetry. Its first captured
+same-session repeat was `git rev-parse HEAD` after 124.707 seconds. No result is
+currently blocked, rewritten, cached, or reused.
