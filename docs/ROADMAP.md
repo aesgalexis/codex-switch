@@ -21,15 +21,18 @@ Do not expand model routing until the reflex path is working.
 
 ## Phase 1 - observe hooks
 
-Goal: learn what Codex actually does before suppressing anything.
+Status: initial implementation complete; real Codex-session measurement is next.
 
-Build:
+Implemented:
 
-- hook entrypoint
-- parse `PreToolUse` and `PostToolUse`
-- structured local event log with no secrets
-- tool/command classification
-- metrics for repeated read-only checks
+- project-scoped Bash `PreToolUse` and `PostToolUse` hooks
+- hook entrypoint with fail-open behavior
+- tiny read-only command allowlist
+- structured local JSONL event log
+- semantic command keys instead of raw commands
+- hashed session, turn, and tool-use identifiers
+- no tool-response contents
+- repetition counts and timing metrics via `npm run reflex:stats`
 
 Behavior:
 
@@ -39,7 +42,7 @@ Behavior:
 
 Success criterion:
 
-We can answer: which orientation checks Codex repeats, how often, and how close together?
+Run normal Codex sessions and answer: which orientation checks Codex repeats, how often, and how close together?
 
 ## Phase 2 - deterministic evidence store
 
