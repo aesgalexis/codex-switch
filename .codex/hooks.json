@@ -1,0 +1,33 @@
+{
+  "description": "Observe repeated read-only Bash checks while developing the model-switch reflex layer.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/src/hooks/reflex-hook.js\"",
+            "commandWindows": "powershell -NoProfile -Command \"$root = (git rev-parse --show-toplevel).Trim(); node (Join-Path $root 'src/hooks/reflex-hook.js')\"",
+            "timeout": 5,
+            "statusMessage": "Observing reflex candidate"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/src/hooks/reflex-hook.js\"",
+            "commandWindows": "powershell -NoProfile -Command \"$root = (git rev-parse --show-toplevel).Trim(); node (Join-Path $root 'src/hooks/reflex-hook.js')\"",
+            "timeout": 5,
+            "statusMessage": "Recording reflex observation"
+          }
+        ]
+      }
+    ]
+  }
+}
