@@ -12,8 +12,9 @@ const CACHEABLE_OUTPUT_KINDS = new Set([
   "fs.read", "fs.search", "fs.list", "shell.compound.readonly",
 ]);
 
-export function statePath() {
-  return path.join(path.dirname(eventLogPath()), "reflex-state.json");
+export function statePath(cwd = process.cwd()) {
+  const log = eventLogPath(cwd);
+  return log ? path.join(path.dirname(log), process.env.MODEL_SWITCH_REFLEX_LOG ? "reflex-state.json" : "state.json") : null;
 }
 
 export function emptyState(workspaceId = null) {
@@ -21,6 +22,7 @@ export function emptyState(workspaceId = null) {
     schema: 2, workspaceGeneration: 0,
     generations: { identity: 0, workspace: 0, external: 0 },
     workspaceId, updatedAt: null, evidence: [], pending: {},
+    recentInvocations: {},
     fileGenerations: {}, allFilesGeneration: 0,
   };
 }
@@ -37,14 +39,17 @@ function normalizedState(parsed, workspaceId) {
     workspaceId: parsed.workspaceId ?? workspaceId,
     evidence: Array.isArray(parsed.evidence) ? parsed.evidence : [],
     pending: parsed.pending && typeof parsed.pending === "object" ? parsed.pending : {},
+    recentInvocations: parsed.recentInvocations && typeof parsed.recentInvocations === "object" ? parsed.recentInvocations : {},
     fileGenerations: parsed.fileGenerations && typeof parsed.fileGenerations === "object" ? parsed.fileGenerations : {},
     allFilesGeneration: Number.isInteger(parsed.allFilesGeneration) ? parsed.allFilesGeneration : 0,
   };
 }
 
-export async function readReflexState(workspaceId = null) {
+export async function readReflexState(workspaceId = null, cwd = process.cwd()) {
   try {
-    const parsed = JSON.parse(await readFile(statePath(), "utf8"));
+    const target = statePath(cwd);
+    if (!target) return emptyState(workspaceId);
+    const parsed = JSON.parse(await readFile(target, "utf8"));
     if (![1, 2].includes(parsed?.schema)) return emptyState(workspaceId);
     if (workspaceId && parsed.workspaceId && parsed.workspaceId !== workspaceId) return emptyState(workspaceId);
     return normalizedState(parsed, workspaceId);
@@ -54,12 +59,14 @@ export async function readReflexState(workspaceId = null) {
   }
 }
 
-export async function writeReflexState(state) {
-  const target = statePath();
+export async function writeReflexState(state, cwd = process.cwd()) {
+  const target = statePath(cwd);
+  if (!target) return;
   await mkdir(path.dirname(target), { recursive: true });
   const bounded = {
     ...state, schema: 2, evidence: state.evidence.slice(-500),
     pending: Object.fromEntries(Object.entries(state.pending ?? {}).slice(-200)),
+    recentInvocations: Object.fromEntries(Object.entries(state.recentInvocations ?? {}).slice(-200)),
     updatedAt: new Date().toISOString(),
   };
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
@@ -71,8 +78,10 @@ export async function writeReflexState(state) {
   }
 }
 
-export async function withReflexStateLock(work) {
-  const lockPath = `${statePath()}.lock`;
+export async function withReflexStateLock(work, cwd = process.cwd()) {
+  const target = statePath(cwd);
+  if (!target) return work();
+  const lockPath = `${target}.lock`;
   await mkdir(path.dirname(lockPath), { recursive: true });
   let handle;
   for (let attempt = 0; attempt < 200; attempt += 1) {

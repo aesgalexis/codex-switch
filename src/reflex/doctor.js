@@ -3,9 +3,11 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { eventLogPath } from "./events.js";
+import { globalConfigPath, inspectIntegration } from "./codex-integration.js";
 import { promptHintMode } from "./hints.js";
 import { statePath } from "./state.js";
 import { REFLEX_RUNTIME } from "./runtime.js";
+import { knownWorkspaces, resolveWorkspace } from "./workspace.js";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const hookEvents = ["UserPromptSubmit", "PreToolUse", "PostToolUse"];
@@ -26,8 +28,13 @@ function commandVersion(executable, args) {
   return result.status === 0 ? result.stdout.trim() || result.stderr.trim() : null;
 }
 
-export async function diagnoseReflex({ root = projectRoot, log = eventLogPath(), stateFile = statePath(), env = process.env } = {}) {
+export async function diagnoseReflex({ root = projectRoot, cwd = process.cwd(), log = eventLogPath(cwd), stateFile = statePath(cwd), env = process.env } = {}) {
   const warnings = [];
+  const workspace = resolveWorkspace(cwd, env);
+  const configFile = globalConfigPath(env);
+  const configText = await readFile(configFile, "utf8").catch(() => "");
+  const integration = inspectIntegration(configText, root);
+  const workspaceCount = (await knownWorkspaces(env)).length;
   const hooksFile = path.join(root, ".codex", "hooks.json");
   const hookScript = path.join(root, "src", "hooks", "reflex-hook.js");
   const hookScriptExists = (await fileInfo(hookScript)).exists;
@@ -35,14 +42,18 @@ export async function diagnoseReflex({ root = projectRoot, log = eventLogPath(),
   let hooks = null;
   try { hooks = JSON.parse(await readFile(hooksFile, "utf8")); }
   catch { warnings.push("Project hooks missing or invalid: .codex/hooks.json"); }
-  const hookStatus = Object.fromEntries(hookEvents.map((name) => {
+  const projectHookStatus = Object.fromEntries(hookEvents.map((name) => {
     const configured = Array.isArray(hooks?.hooks?.[name]) && hooks.hooks[name].some((entry) =>
       Array.isArray(entry.hooks) && entry.hooks.some((hook) =>
         hook.type === "command" && typeof (process.platform === "win32" ? hook.commandWindows : hook.command) === "string" &&
         (process.platform === "win32" ? hook.commandWindows : hook.command).includes("reflex-hook.js")));
-    if (!configured) warnings.push(`${name} hook not configured`);
     return [name, configured];
   }));
+  const hookStatus = Object.fromEntries(hookEvents.map((name) => [name, integration.installed || projectHookStatus[name]]));
+  for (const [name, configured] of Object.entries(hookStatus)) if (!configured) warnings.push(`${name} hook not configured`);
+  const projectDuplicate = integration.installed && Object.values(projectHookStatus).some(Boolean);
+  if (projectDuplicate) warnings.push("Project-local model-switch hooks duplicate the global integration");
+  if (integration.conflict) warnings.push("Global model-switch hook block is duplicated or points at another engine");
   const logInfo = await fileInfo(log);
   const stateInfo = await fileInfo(stateFile);
   let stateReadable = false;
@@ -65,6 +76,9 @@ export async function diagnoseReflex({ root = projectRoot, log = eventLogPath(),
   const jevKey = Boolean(env.TYPESAFE_API_KEY?.trim());
   const jevShadow = env.MODEL_SWITCH_REFLEX_JEV_SHADOW !== "off";
   return { runtime: REFLEX_RUNTIME, codex, branch: branch || "(detached/unknown)", hooksFile, hookScriptExists,
+    globalIntegration: { ...integration, config: configFile, engine: hookScript, engineAccessible: hookScriptExists },
+    knownWorkspaces: workspaceCount, workspace: workspace ? { id: workspace.id, path: workspace.canonical } : null,
+    projectHooks: projectHookStatus, projectDuplicate,
     hooks: hookStatus, promptHints: promptHintMode(env.MODEL_SWITCH_PROMPT_HINT_MODE),
     jev: jevKey ? (jevShadow ? "configured (shadow only)" : "key present, shadow off") : "unavailable (no API key)",
     log: { path: log, ...logInfo }, state: { path: stateFile, ...stateInfo, readable: stateReadable, generation, evidence }, warnings };
@@ -74,7 +88,10 @@ export function formatDoctor(report) {
   const size = (file) => file.exists ? `${(file.bytes / 1024).toFixed(1)} KiB` : "missing";
   return [
     `model-switch ${report.runtime} | Codex ${report.codex ?? "missing"} | branch ${report.branch}`,
+    `Global integration: ${report.globalIntegration.installed ? "yes" : "no"} | config: ${report.globalIntegration.config}`,
+    `Engine: ${report.globalIntegration.engine} (${report.globalIntegration.engineAccessible ? "accessible" : "missing"})`,
     `Hooks: script ${report.hookScriptExists ? "✓" : "MISSING"} · ${Object.entries(report.hooks).map(([name, ok]) => `${name} ${ok ? "✓" : "MISSING"}`).join(" · ")}`,
+    `Known workspaces: ${report.knownWorkspaces} | current: ${report.workspace ? `${report.workspace.id} (${report.workspace.path})` : "unresolved"}`,
     `Prompt hints: ${report.promptHints} | Jev: ${report.jev} | reuse: enabled (exact, bounded)`,
     `Event log: ${report.log.path} (${size(report.log)})`,
     `State: ${report.state.path} (${size(report.state)}, ${report.state.readable ? "readable" : "unreadable"})`,

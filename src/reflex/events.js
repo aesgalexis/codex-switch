@@ -1,14 +1,12 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveWorkspace } from "./workspace.js";
 
-const projectRoot = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
-
-export function eventLogPath() {
+export function eventLogPath(cwd = process.cwd()) {
   return process.env.MODEL_SWITCH_REFLEX_LOG
     ? path.resolve(process.env.MODEL_SWITCH_REFLEX_LOG)
-    : path.join(projectRoot, ".model-switch", "reflex-events.jsonl");
+    : resolveWorkspace(cwd)?.events ?? null;
 }
 
 export function hashIdentifier(value) {
@@ -16,15 +14,17 @@ export function hashIdentifier(value) {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
-export async function appendReflexEvent(event) {
-  const target = eventLogPath();
+export async function appendReflexEvent(event, cwd = process.cwd()) {
+  const target = eventLogPath(cwd);
+  if (!target) return;
   await mkdir(path.dirname(target), { recursive: true });
   await appendFile(target, JSON.stringify(event) + "\n", "utf8");
 }
 
-export async function readReflexEvents() {
+export async function readReflexEvents(log = eventLogPath()) {
+  if (!log) return [];
   try {
-    const raw = await readFile(eventLogPath(), "utf8");
+    const raw = await readFile(log, "utf8");
     return raw
       .split(/\r?\n/)
       .filter(Boolean)

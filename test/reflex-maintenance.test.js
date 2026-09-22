@@ -11,7 +11,7 @@ import { summarizeReflexEvents } from "../src/reflex/stats.js";
 test("doctor reports configured hooks and readable state without exposing Jev key", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "reflex-doctor-"));
   const directory = path.join(root, ".model-switch");
-  const log = path.join(directory, "reflex-events.jsonl");
+  const log = path.join(directory, "events.jsonl");
   const stateFile = path.join(directory, "reflex-state.json");
   try {
     await mkdir(path.join(root, ".codex"));
@@ -53,7 +53,7 @@ test("doctor warns when hooks and telemetry have not been initialized", async ()
 test("rotate retains the event history and evidence state, including absent-log case", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "reflex-rotate-"));
   const directory = path.join(root, ".model-switch");
-  const log = path.join(directory, "reflex-events.jsonl");
+  const log = path.join(directory, "events.jsonl");
   const stateFile = path.join(directory, "reflex-state.json");
   try {
     await mkdir(directory);
@@ -62,11 +62,11 @@ test("rotate retains the event history and evidence state, including absent-log 
     await writeFile(log, "history\n");
     const rotated = await rotateReflexLog({ log, directory, now: new Date("2026-09-22T10:00:00.000Z") });
     assert.equal(rotated.rotated, true);
-    assert.match(path.basename(rotated.destination), /^reflex-events-2026-09-22T10-00-00-000Z\.jsonl$/);
+    assert.match(path.basename(rotated.destination), /^events-2026-09-22T10-00-00-000Z\.jsonl$/);
     assert.equal(await readFile(rotated.destination, "utf8"), "history\n");
     assert.equal(await readFile(stateFile, "utf8"), "evidence-state");
     assert.deepEqual((await readdir(directory)).sort(), [path.basename(rotated.destination), "reflex-state.json"].sort());
-    await assert.rejects(rotateReflexLog({ log: path.join(root, "outside.jsonl"), directory }), /inside .model-switch/);
+    await assert.rejects(rotateReflexLog({ log: path.join(root, "outside.jsonl"), directory }), /workspace storage directory/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

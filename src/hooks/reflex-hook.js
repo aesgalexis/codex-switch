@@ -7,6 +7,7 @@ import { advanceFileGenerations, advanceGenerations, consumePending, evidenceFro
 import { deterministicShadow, semanticShadow } from "../reflex/shadow.js";
 import { REFLEX_RUNTIME } from "../reflex/runtime.js";
 import { editedFileKeys, fileFreshness, fullFileReadInfo } from "../reflex/files.js";
+import { resolveWorkspace } from "../reflex/workspace.js";
 
 async function readStdin() {
   let raw = "";
@@ -96,11 +97,19 @@ async function main() {
   const classification = classifyBashCommand(command);
   const session = hashIdentifier(input?.session_id);
   const toolUse = hashIdentifier(input?.tool_use_id);
-  const workspacePath = typeof input?.cwd === "string" ? input.cwd : process.cwd();
-  const workspaceId = fingerprint(workspacePath.toLowerCase());
+  const requestedCwd = typeof input?.cwd === "string" ? input.cwd : null;
+  const workspace = resolveWorkspace(requestedCwd);
+  if (!workspace) return;
+  const workspacePath = workspace.canonical;
+  const workspaceId = workspace.id;
   return withReflexStateLock(async () => {
-  const state = await readReflexState(workspaceId);
+  const state = await readReflexState(workspaceId, workspacePath);
   state.workspaceId = workspaceId;
+  const invocationKey = `${eventName}:${toolUse ?? hashIdentifier(input?.turn_id) ?? "unknown"}`;
+  const previousInvocation = Date.parse(state.recentInvocations?.[invocationKey]);
+  if (Number.isFinite(previousInvocation) && Date.now() - previousInvocation < 10000) return;
+  state.recentInvocations ??= {};
+  state.recentInvocations[invocationKey] = new Date().toISOString();
   const generationBefore = state.workspaceGeneration;
 
   if (eventName === "UserPromptSubmit") {
@@ -112,6 +121,7 @@ async function main() {
       hint = { facts: [], text: null };
     }
     const injected = mode === "inject" && Boolean(hint.text);
+    await writeReflexState(state, workspacePath);
     await appendReflexEvent({
       schema: 2,
       reflexRuntime: REFLEX_RUNTIME,
@@ -128,7 +138,7 @@ async function main() {
       hintInjected: injected,
       hintFacts: hint.facts.map((fact) => fact.kind),
       hintBytes: injected ? Buffer.byteLength(hint.text) : 0,
-    });
+    }, workspacePath);
     return injected ? userPromptHookOutput(hint.text) : null;
   }
 
@@ -192,7 +202,7 @@ async function main() {
       fileGenerations: { ...state.fileGenerations },
       allFilesGeneration: state.allFilesGeneration,
     });
-    await writeReflexState(state);
+    await writeReflexState(state, workspacePath);
   } else {
     const response = input?.tool_response;
     const pending = consumePending(state, toolUse);
@@ -227,7 +237,7 @@ async function main() {
         allFilesGeneration: fileKey ? (pending?.allFilesGeneration ?? state.allFilesGeneration ?? 0) : null,
       }));
     }
-    await writeReflexState(state);
+    await writeReflexState(state, workspacePath);
   }
 
   await appendReflexEvent({
@@ -261,9 +271,9 @@ async function main() {
     toolUse,
     permissionMode: typeof input?.permission_mode === "string" ? input.permission_mode : null,
     responseShape: eventName === "PostToolUse" ? responseShape(input?.tool_response) : null,
-  });
+  }, workspacePath);
   return hookResponse;
-  });
+  }, workspacePath);
 }
 
 try {

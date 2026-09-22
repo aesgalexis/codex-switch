@@ -231,6 +231,46 @@ calls, while continuing to validate shadow decisions and applied reuse:
 
 See [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Global Codex CLI integration
+
+Install once for the current user:
+
+```powershell
+npm run install:codex
+```
+
+The installer adds a marked, idempotent block to `~/.codex/config.toml`, preserves
+other settings and hooks, and creates a timestamped backup before writing. It
+points directly at this checkout, so updates only require `git pull`. Daily usage
+is simply `cd C:\any\project` followed by `codex`.
+
+```text
+Codex CLI -> global user hooks -> model-switch engine
+          -> canonical cwd resolver -> isolated workspace state
+```
+
+Runtime data lives outside consumer repositories under
+`~/.codex/model-switch-global/workspaces/<workspace-id>/`. The ID is derived from
+the canonical real path without exposing that path in the directory name. Each
+workspace receives separate `state.json` and `events.jsonl`. Non-Git directories
+retain safe filesystem behavior without invented Git facts; invalid `cwd` values
+fail open.
+
+```powershell
+npm run reflex:doctor
+npm run reflex:stats
+npm run reflex:stats -- --workspace C:\proyectos\UNATOMO
+npm run reflex:stats -- --all
+npm run reflex:rotate
+npm run reflex:rotate -- --workspace C:\proyectos\UNATOMO
+npm run reflex:rotate -- --all
+npm run uninstall:codex
+```
+
+Rotation renames event logs only and preserves evidence. No engine files are
+copied into workspaces. Duplicate global/project invocations are suppressed by a
+short per-workspace invocation key and reported by `reflex:doctor`.
+
 ## Reflex layer quick start
 
 Most operations remain observational. Applied behavior is limited to the exact

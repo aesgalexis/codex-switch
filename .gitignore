@@ -6,4 +6,7 @@ coverage/
 *.log
 .DS_Store
 .model-switch/
+.validation-codex/
+.validation-global-state/
+.tmp-codex-home/
 # Local reflex telemetry; retained here explicitly via its parent directory.

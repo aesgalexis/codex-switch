@@ -42,7 +42,7 @@ function hookInput(event, command, toolUse, response) {
     session_id: "integration-session",
     turn_id: `turn-${toolUse}`,
     tool_use_id: toolUse,
-    cwd: "C:/work/model-switch",
+    cwd: process.cwd(),
   };
 }
 
@@ -244,7 +244,7 @@ test("UserPromptSubmit injects only fresh facts and records no prompt text", asy
     invokeHook(hookInput("PostToolUse", "git status --short", "status", { exit_code: 0, output: " M README.md\n?? notes.txt\n" }), logPath);
     const prompt = {
       hook_event_name: "UserPromptSubmit", prompt: "Review the project tests TOKEN=private",
-      session_id: "integration-session", turn_id: "hint-turn", cwd: "C:/work/model-switch",
+      session_id: "integration-session", turn_id: "hint-turn", cwd: process.cwd(),
     };
     const output = JSON.parse(invokeHook(prompt, logPath, { MODEL_SWITCH_PROMPT_HINT_MODE: "inject" }));
     const context = output.hookSpecificOutput.additionalContext;

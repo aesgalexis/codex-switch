@@ -6,6 +6,31 @@ The architecture follows one rule:
 
 > Deterministic facts belong to code. Ambiguous judgments may go to Jev. Expensive investigation stays with Codex.
 
+## Global Codex hook path
+
+```text
+Codex CLI
+   -> user-level hooks in ~/.codex/config.toml
+   -> C:\proyectos\model-switch\src\hooks\reflex-hook.js
+   -> canonical realpath(input.cwd)
+   -> ~/.codex/model-switch-global/workspaces/<sha256-prefix>/
+        state.json
+        events.jsonl
+```
+
+The global configuration contains only command hook declarations; the engine
+remains in this repository. Workspace identity comes from an existing absolute,
+canonical directory path, independently of Git. The hash ID does not expose the
+path in storage names. Evidence, generations, pending calls, duplicate
+suppression, sessions, hints, cache entries, and telemetry are partitioned before
+state is read or locked.
+
+Locks are per workspace, so simultaneous Codex sessions in different projects
+cannot corrupt or block one another. `realpath` collapses symlinks and Windows
+junctions before hashing. Invalid paths fail open, consumer repositories receive
+no runtime files, and global stats aggregate numeric summaries without combining
+cache identities or evidence.
+
 ## Layers
 
 ### L0 - facts
