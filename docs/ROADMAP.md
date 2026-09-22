@@ -40,7 +40,8 @@ Observed in real use:
 
 - the first same-session repeated check was `git rev-parse HEAD`
 - the repeat interval was 124.707 seconds (approximately 125 seconds)
-- compound commands passed through and remained ineligible
+- safe semicolon compounds were common enough to justify exact, allowlist-bound
+  compound reuse in Phase 3
 
 Current client boundary:
 
@@ -59,8 +60,8 @@ Behavior:
 Success criterion:
 
 Collect enough normal CLI sessions to answer which orientation checks Codex
-repeats, how often, and how close together. One real repeat has already been
-captured; broader usage is still needed before reuse is implemented.
+repeats, how often, and how close together. Broader normal-session usage is still
+needed to assess which applied candidates produce meaningful savings.
 
 ## Phase 2 - deterministic evidence store
 
@@ -73,9 +74,9 @@ Implemented in shadow mode:
 
 - bounded local evidence store under `.model-switch/`
 - hashed workspace/repository identity
-- workspace generation advanced by any non-proven-read-only operation
+- identity, workspace, and external generations advanced according to mutation scope
 - provenance, timestamps, sessions, command and response fingerprints
-- exact same-session/same-generation reuse candidates
+- exact same-session candidates validated against their domain generations
 - stale-after-mutation decisions
 - broader conservative Git, filesystem, runtime, GitHub, Firebase, and gcloud
   read-only classification
@@ -92,9 +93,9 @@ Initial candidates:
 
 Current behavior:
 
-- observe and persist evidence
-- calculate dry-run decisions showing when a call *could* have been reused
-- execute the original tool call except for the three Phase 3 pilot commands
+- observe and persist bounded evidence
+- calculate deterministic and semantic shadow decisions
+- apply only the explicit Phase 3 deterministic allowlist
 
 Success criterion:
 
@@ -103,7 +104,7 @@ generation invalidation, and redaction behavior are correct.
 
 ## Phase 3 - safe reuse
 
-Status: first conservative pilot implemented.
+Status: conservative deterministic allowlist implemented.
 
 Goal: actually avoid a tiny set of redundant deterministic checks.
 
@@ -112,15 +113,19 @@ Enabled only for exact repeats of:
 - `git rev-parse HEAD`
 - `git branch --show-current`
 - `git rev-parse --show-toplevel`
+- selected `git status` and `git diff` forms
+- complete file reads and searches
+- safe semicolon compounds whose every component is independently in this list
 
 The implementation uses the supported `PreToolUse` `updatedInput.command`
 mechanism to replace the redundant Git query with a shell-native output command.
-All other commands remain observe/shadow-only.
+All other commands remain observe/shadow-only. Read-only classification by itself
+never grants applied reuse.
 
 Enable reuse only for calls with:
 
 - exact recognized semantics
-- fresh same-generation evidence
+- fresh evidence in every relevant validity domain
 - no ambiguity
 - no mutation risk
 
@@ -227,6 +232,7 @@ Then expand one behavior at a time.
 1. Collect comparable CLI turns with prompt hints off/observed and injected.
 2. Measure whether HEAD, branch, and root orientation checks actually decrease.
 3. Audit classifier misses, redaction, provenance, and generation invalidation.
-4. Keep applied reuse limited to the three deterministic pilot commands.
+4. Keep applied reuse limited to the current deterministic allowlist and review
+   every proposed expansion against real usage.
 5. Keep Jev limited to bounded semantic decisions where deterministic local
    facts cannot decide safely.

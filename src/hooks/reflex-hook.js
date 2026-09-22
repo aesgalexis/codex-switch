@@ -2,8 +2,8 @@ import { classifyBashCommand } from "../reflex/classify.js";
 import { appendReflexEvent, hashIdentifier } from "../reflex/events.js";
 import { promptHintMode, selectPromptHint, userPromptHookOutput } from "../reflex/hints.js";
 import { commandPattern, fingerprint, redactCommand } from "../reflex/privacy.js";
-import { preToolUseRewrite, safePlanActualReuse } from "../reflex/reuse.js";
-import { advanceGeneration, consumePending, evidenceFromObservation, readReflexState, recordPending, writeReflexState } from "../reflex/state.js";
+import { isActualReuseCandidate, preToolUseRewrite, safePlanActualReuse } from "../reflex/reuse.js";
+import { advanceGenerations, consumePending, evidenceFromObservation, outputStorageReason, readReflexState, recordPending, withReflexStateLock, writeReflexState } from "../reflex/state.js";
 import { deterministicShadow, semanticShadow } from "../reflex/shadow.js";
 
 async function readStdin() {
@@ -47,6 +47,41 @@ function operationTelemetry(operation, index) {
   };
 }
 
+function compoundOperation(classification, command) {
+  if (!classification.safeCompound || classification.operations.length < 2 ||
+      !classification.operations.every(isActualReuseCandidate)) return null;
+  return { command, key: "shell.compound.readonly", family: "compound", access: "read-only", eligible: true };
+}
+
+function compoundGenerationDomains(classification) {
+  const domains = new Set();
+  for (const operation of classification.operations) {
+    if (["git.head", "git.root", "git.branch.current"].includes(operation.key)) domains.add("identity");
+    else if (["gh", "firebase", "gcloud"].includes(operation.family)) domains.add("external");
+    else domains.add("workspace");
+  }
+  return [...domains];
+}
+
+function invalidationDomains(classification, toolName) {
+  if (["apply_patch", "Edit", "Write"].includes(toolName)) return ["workspace"];
+  if (!classification.potentiallyMutating) return [];
+  const operations = classification.operations.length > 0 ? classification.operations : [classification];
+  const domains = new Set();
+  const structuralGit = /git\.(?:branch|checkout|switch|reset|merge|rebase|cherry-pick|pull|commit|revert|stash|clean|restore|rm|mv|worktree|clone|init)/;
+  for (const operation of operations) {
+    if (operation.access === "read-only") continue;
+    if (operation.family === "git") {
+      domains.add("workspace");
+      if (structuralGit.test(operation.reason ?? "")) domains.add("identity");
+    } else if (["gh", "firebase", "gcloud"].includes(operation.family)) domains.add("external");
+    else if (operation.family === "unknown" || operation.family === "compound") {
+      domains.add("identity"); domains.add("workspace"); domains.add("external");
+    } else domains.add("workspace");
+  }
+  return [...domains];
+}
+
 async function main() {
   const raw = await readStdin();
   if (!raw.trim()) return;
@@ -61,6 +96,7 @@ async function main() {
   const toolUse = hashIdentifier(input?.tool_use_id);
   const workspacePath = typeof input?.cwd === "string" ? input.cwd : process.cwd();
   const workspaceId = fingerprint(workspacePath.toLowerCase());
+  return withReflexStateLock(async () => {
   const state = await readReflexState(workspaceId);
   state.workspaceId = workspaceId;
   const generationBefore = state.workspaceGeneration;
@@ -96,25 +132,44 @@ async function main() {
   const operations = classification.operations.map(operationTelemetry);
   let hookResponse = null;
   let actualReuseDelivery = null;
+  let compoundReuse = null;
+  let evidenceStorage = null;
 
   if (eventName === "PreToolUse") {
     let jevAttempted = false;
     let pendingMetadata = {};
+    const compound = compoundOperation(classification, command);
+    if (compound) {
+      compoundReuse = safePlanActualReuse(state, { operation: compound, session, commandHash: fingerprint(command) });
+      if (compoundReuse.outcome === "actual_reuse") {
+        pendingMetadata = { actualReuse: { key: compoundReuse.key, evidenceGeneration: compoundReuse.evidenceGeneration } };
+        hookResponse = preToolUseRewrite(compoundReuse.updatedCommand);
+      }
+    } else if (classification.compound) {
+      compoundReuse = {
+        outcome: "not_candidate",
+        reason: !classification.safeCompound ? "unsafe_compound"
+          : classification.operations.some((item) => item.access !== "read-only") ? "compound_not_read_only"
+            : "compound_has_unsupported_operation",
+      };
+    }
     for (let index = 0; index < classification.operations.length; index += 1) {
       const operation = classification.operations[index];
       const commandHash = operations[index].commandHash;
       operations[index].shadow = deterministicShadow(state, { operation, session, commandHash });
-      if (!classification.compound && classification.operations.length === 1) {
+      if (classification.compound) {
+        operations[index].actualReuse = {
+          outcome: compoundReuse?.outcome === "actual_reuse" ? "covered_by_compound_cache" : "not_candidate",
+          reason: compoundReuse?.outcome === "actual_reuse" ? "served_by_compound_cache" : "compound_component",
+        };
+      } else if (classification.operations.length === 1) {
         {
           const reuse = safePlanActualReuse(state, { operation, session, commandHash });
-          if (reuse.outcome !== "not_candidate") {
-            operations[index].actualReuse = {
-              outcome: reuse.outcome,
-              reason: reuse.reason,
-              evidenceGeneration: reuse.evidenceGeneration ?? null,
-              evidenceTimestamp: reuse.evidenceTimestamp ?? null,
-            };
-          }
+          operations[index].actualReuse = {
+            outcome: reuse.outcome, reason: reuse.reason ?? null,
+            evidenceGeneration: reuse.evidenceGeneration ?? null,
+            evidenceTimestamp: reuse.evidenceTimestamp ?? null,
+          };
           if (reuse.outcome === "actual_reuse") {
             pendingMetadata = { actualReuse: { key: reuse.key, evidenceGeneration: reuse.evidenceGeneration } };
             hookResponse = preToolUseRewrite(reuse.updatedCommand);
@@ -135,16 +190,23 @@ async function main() {
     const response = input?.tool_response;
     const pending = consumePending(state, toolUse);
     const observationGeneration = Number.isInteger(pending?.workspaceGeneration) ? pending.workspaceGeneration : state.workspaceGeneration;
+    const observationGenerations = pending?.generations ?? { ...state.generations };
     const reused = Boolean(pending?.actualReuse);
     if (reused) {
       actualReuseDelivery = { ...pending.actualReuse, success: responseSucceeded(response) };
     }
-    advanceGeneration(state, reused ? false : classification.potentiallyMutating);
-    if (!reused && !classification.compound && classification.operations.length === 1 && classification.operations[0].eligible && responseSucceeded(response)) {
+    const invalidated = reused ? [] : invalidationDomains(classification, toolName);
+    advanceGenerations(state, invalidated);
+    const compound = compoundOperation(classification, command);
+    if (!reused && responseSucceeded(response) && (compound || (!classification.compound && classification.operations.length === 1 && classification.operations[0].eligible))) {
+      const observedOperation = compound ?? classification.operations[0];
+      evidenceStorage = outputStorageReason(observedOperation, observedOperation.command, responseOutput(response));
       state.evidence.push(evidenceFromObservation({
-        operation: classification.operations[0], command: classification.operations[0].command,
+        operation: observedOperation, command: observedOperation.command,
         output: responseOutput(response), at: new Date().toISOString(), session, tool: toolName,
-        generation: observationGeneration, workspaceId,
+        generations: observationGenerations,
+        generationDomains: compound ? compoundGenerationDomains(classification) : null,
+        workspaceGeneration: observationGeneration, workspaceId,
       }));
     }
     await writeReflexState(state);
@@ -165,8 +227,14 @@ async function main() {
     compound: classification.compound,
     safeCompound: classification.safeCompound,
     potentiallyMutating: actualReuseDelivery ? false : classification.potentiallyMutating,
+    invalidationDomains: actualReuseDelivery ? [] : invalidationDomains(classification, toolName),
     operations,
+    compoundReuse: compoundReuse ? {
+      outcome: compoundReuse.outcome, reason: compoundReuse.reason ?? null,
+      evidenceGeneration: compoundReuse.evidenceGeneration ?? null,
+    } : null,
     actualReuseDelivery,
+    evidenceStorage,
     generationBefore,
     generationAfter: state.workspaceGeneration,
     session,
@@ -176,6 +244,7 @@ async function main() {
     responseShape: eventName === "PostToolUse" ? responseShape(input?.tool_response) : null,
   });
   return hookResponse;
+  });
 }
 
 try {

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,20 @@ function invokeHook(input, logPath, overrides = {}) {
   return result.stdout;
 }
 
+function invokeHookAsync(input, logPath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [hookPath], {
+      env: { ...process.env, MODEL_SWITCH_REFLEX_LOG: logPath, MODEL_SWITCH_REFLEX_JEV_SHADOW: "off" },
+      windowsHide: true,
+    });
+    let stdout = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(`hook exit ${code}`)));
+    child.stdin.end(JSON.stringify(input));
+  });
+}
+
 function hookInput(event, command, toolUse, response) {
   return {
     hook_event_name: event,
@@ -32,7 +46,7 @@ function hookInput(event, command, toolUse, response) {
   };
 }
 
-test("hook performs deterministic reuse, reports delivery, and invalidates after mutation", async () => {
+test("hook preserves identity reuse across a working-tree mutation", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "model-switch-reuse-"));
   const logPath = path.join(directory, "events.jsonl");
   const head = "4b6018d0d061882760a2625e8946abc9e38db228";
@@ -43,21 +57,109 @@ test("hook performs deterministic reuse, reports delivery, and invalidates after
     const rewriteRaw = invokeHook(hookInput("PreToolUse", "git rev-parse HEAD", "head-2"), logPath);
     const rewrite = JSON.parse(rewriteRaw);
     assert.equal(rewrite.hookSpecificOutput.permissionDecision, "allow");
-    assert.match(rewrite.hookSpecificOutput.updatedInput.command, /Write-Output/);
+    assert.match(rewrite.hookSpecificOutput.updatedInput.command, /Console.*Out.*Write/);
     invokeHook(hookInput("PostToolUse", rewrite.hookSpecificOutput.updatedInput.command, "head-2", { exit_code: 0, output: head }), logPath);
 
     const mutation = hookInput("PostToolUse", "*** Begin Patch", "mutation", { ok: true });
     mutation.tool_name = "apply_patch";
     invokeHook(mutation, logPath);
-    assert.equal(invokeHook(hookInput("PreToolUse", "git rev-parse HEAD", "head-3"), logPath), "");
+    assert.notEqual(invokeHook(hookInput("PreToolUse", "git rev-parse HEAD", "head-3"), logPath), "");
 
     const events = (await readFile(logPath, "utf8")).trim().split(/\r?\n/).map(JSON.parse);
     const summary = summarizeReflexEvents(events);
+    assert.equal(summary.plannedReuse, 2);
     assert.equal(summary.actualReuse, 1);
     assert.equal(summary.gitSubprocessesAvoided, 1);
     assert.equal(summary.toolCallsAvoidedByPreToolReuse, 0);
-    assert.equal(summary.staleAfterMutation, 1);
+    assert.equal(summary.staleAfterMutation, 0);
     assert.equal(summary.falseReuseErrors, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Git branch mutations invalidate cached current-branch identity", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "model-switch-branch-invalidation-"));
+  const logPath = path.join(directory, "events.jsonl");
+  try {
+    invokeHook(hookInput("PreToolUse", "git branch --show-current", "branch-1"), logPath);
+    invokeHook(hookInput("PostToolUse", "git branch --show-current", "branch-1", { exit_code: 0, output: "before" }), logPath);
+    assert.notEqual(invokeHook(hookInput("PreToolUse", "git branch --show-current", "branch-2"), logPath), "");
+
+    invokeHook(hookInput("PreToolUse", "git branch -m after", "rename"), logPath);
+    invokeHook(hookInput("PostToolUse", "git branch -m after", "rename", { exit_code: 0, output: "" }), logPath);
+    assert.equal(invokeHook(hookInput("PreToolUse", "git branch --show-current", "branch-3"), logPath), "");
+
+    const events = (await readFile(logPath, "utf8")).trim().split(/\r?\n/).map(JSON.parse);
+    const rename = events.find((event) => event.event === "PostToolUse" && event.command === "git branch -m after");
+    assert.deepEqual(rename.invalidationDomains.sort(), ["identity", "workspace"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("hook learns and reuses an exact read-only compound until a dependency changes", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "model-switch-compound-"));
+  const logPath = path.join(directory, "events.jsonl");
+  const command = "git status --short; git diff";
+  const output = " M README.md\ndiff --git a/README.md b/README.md\n";
+  try {
+    assert.equal(invokeHook(hookInput("PreToolUse", command, "compound-1"), logPath), "");
+    invokeHook(hookInput("PostToolUse", command, "compound-1", { exit_code: 0, output }), logPath);
+
+    const rewrite = JSON.parse(invokeHook(hookInput("PreToolUse", command, "compound-2"), logPath));
+    assert.equal(rewrite.hookSpecificOutput.permissionDecision, "allow");
+    assert.match(rewrite.hookSpecificOutput.updatedInput.command, /Console.*Out.*Write/);
+    invokeHook(hookInput("PostToolUse", rewrite.hookSpecificOutput.updatedInput.command, "compound-2", { exit_code: 0, output }), logPath);
+
+    const mutation = hookInput("PostToolUse", "*** Begin Patch", "compound-edit", { ok: true });
+    mutation.tool_name = "apply_patch";
+    invokeHook(mutation, logPath);
+    assert.equal(invokeHook(hookInput("PreToolUse", command, "compound-3"), logPath), "");
+
+    const events = (await readFile(logPath, "utf8")).trim().split(/\r?\n/).map(JSON.parse);
+    const pre = events.filter((event) => event.event === "PreToolUse" && event.command === command);
+    assert.equal(pre[0].compoundReuse.reason, "missing_evidence");
+    assert.equal(pre[1].compoundReuse.outcome, "actual_reuse");
+    assert.equal(pre[2].compoundReuse.reason, "stale_after_mutation");
+    const summary = summarizeReflexEvents(events);
+    assert.equal(summary.actualReuseByCommand["shell.compound.readonly"], 1);
+    assert.equal(summary.reuseRejectionsByReason.missing_evidence, 1);
+    assert.equal(summary.reuseRejectionsByReason.stale_after_mutation, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("parallel observations preserve both cached reads", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "model-switch-parallel-"));
+  const logPath = path.join(directory, "events.jsonl");
+  try {
+    const status = "git status --short";
+    const diff = "git diff --stat";
+    await Promise.all([
+      invokeHookAsync(hookInput("PostToolUse", status, "parallel-status", { exit_code: 0, output: " M README.md\n" }), logPath),
+      invokeHookAsync(hookInput("PostToolUse", diff, "parallel-diff", { exit_code: 0, output: " README.md | 1 +\n" }), logPath),
+    ]);
+    assert.notEqual(invokeHook(hookInput("PreToolUse", status, "status-hit"), logPath), "");
+    assert.notEqual(invokeHook(hookInput("PreToolUse", diff, "diff-hit"), logPath), "");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("hook does not widen reuse through a compound with unsupported operations", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "model-switch-compound-scope-"));
+  const logPath = path.join(directory, "events.jsonl");
+  const command = "gh pr view; git status --short";
+  try {
+    assert.equal(invokeHook(hookInput("PreToolUse", command, "scope-1"), logPath), "");
+    invokeHook(hookInput("PostToolUse", command, "scope-1", { exit_code: 0, output: "PR data\n" }), logPath);
+    assert.equal(invokeHook(hookInput("PreToolUse", command, "scope-2"), logPath), "");
+    const events = (await readFile(logPath, "utf8")).trim().split(/\r?\n/).map(JSON.parse);
+    const pre = events.filter((event) => event.event === "PreToolUse");
+    assert.equal(pre[0].compoundReuse.reason, "compound_has_unsupported_operation");
+    assert.equal(pre[1].compoundReuse.reason, "compound_has_unsupported_operation");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -71,6 +173,7 @@ test("UserPromptSubmit injects only fresh facts and records no prompt text", asy
     invokeHook(hookInput("PostToolUse", "git rev-parse --show-toplevel", "root", { exit_code: 0, output: "C:/work/model-switch" }), logPath);
     invokeHook(hookInput("PostToolUse", "git branch --show-current", "branch", { exit_code: 0, output: "feature/hints" }), logPath);
     invokeHook(hookInput("PostToolUse", "git rev-parse HEAD", "head", { exit_code: 0, output: head }), logPath);
+    invokeHook(hookInput("PostToolUse", "git status --short", "status", { exit_code: 0, output: " M README.md\n?? notes.txt\n" }), logPath);
     const prompt = {
       hook_event_name: "UserPromptSubmit", prompt: "Review the project tests TOKEN=private",
       session_id: "integration-session", turn_id: "hint-turn", cwd: "C:/work/model-switch",
@@ -80,6 +183,8 @@ test("UserPromptSubmit injects only fresh facts and records no prompt text", asy
     assert.match(context, /repo_root: C:\/work\/model-switch/);
     assert.match(context, /branch: feature\/hints/);
     assert.match(context, new RegExp(`head: ${head}`));
+    assert.match(context, /working_tree: dirty/);
+    assert.match(context, /changed_files: 2/);
     assert.equal(context.includes("TOKEN"), false);
 
     const events = (await readFile(logPath, "utf8")).trim().split(/\r?\n/).map(JSON.parse);
@@ -90,7 +195,9 @@ test("UserPromptSubmit injects only fresh facts and records no prompt text", asy
     const mutation = hookInput("PostToolUse", "*** Begin Patch", "edit", { ok: true });
     mutation.tool_name = "apply_patch";
     invokeHook(mutation, logPath);
-    assert.equal(invokeHook({ ...prompt, turn_id: "stale-turn" }, logPath, { MODEL_SWITCH_PROMPT_HINT_MODE: "inject" }), "");
+    const afterEdit = JSON.parse(invokeHook({ ...prompt, turn_id: "stale-turn" }, logPath, { MODEL_SWITCH_PROMPT_HINT_MODE: "inject" }));
+    assert.match(afterEdit.hookSpecificOutput.additionalContext, /head:/);
+    assert.doesNotMatch(afterEdit.hookSpecificOutput.additionalContext, /working_tree:/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -14,6 +14,16 @@ function state(items) {
   return { workspaceGeneration: 4, workspaceId, evidence: items };
 }
 
+test("adds bounded working-tree state from fresh status evidence", () => {
+  const hint = selectPromptHint(state([
+    evidence("git.root", "C:/proyectos/model-switch"),
+    evidence("git.status.short", " M README.md\n?? notes.txt\n"),
+  ]), { session, prompt: "Review project code", nowMs: now, maxAgeMs: 300000 });
+  assert.match(hint.text, /working_tree: dirty/);
+  assert.match(hint.text, /changed_files: 2/);
+  assert.equal(hint.text.includes("README.md"), false);
+});
+
 test("selects only fresh deterministic facts for a workspace-relevant prompt", () => {
   const hint = selectPromptHint(state([
     evidence("git.root", "C:/proyectos/model-switch"),
