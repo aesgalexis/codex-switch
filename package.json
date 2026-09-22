@@ -12,7 +12,13 @@
     "start": "node --env-file=.env src/server.js",
     "dev": "node --env-file=.env --watch src/server.js",
     "test": "node --test",
-    "check": "node --check src/config.js && node --check src/request.js && node --check src/router.js && node --check src/server.js && node --check src/stats.js && node --check src/upstream.js && node --test"
+    "reflex:stats": "node src/reflex/report.js",
+    "reflex:doctor": "node --env-file-if-exists=.env src/reflex/doctor.js",
+    "reflex:rotate": "node --env-file-if-exists=.env src/reflex/rotate.js",
+    "install:codex": "node scripts/codex-integration.mjs install",
+    "uninstall:codex": "node scripts/codex-integration.mjs uninstall",
+    "repo:publish": "node scripts/repo-publish.mjs",
+    "check": "node --check src/config.js && node --check src/request.js && node --check src/router.js && node --check src/server.js && node --check src/stats.js && node --check src/upstream.js && node --check src/reflex/classify.js && node --check src/reflex/events.js && node --check src/reflex/privacy.js && node --check src/reflex/state.js && node --check src/reflex/reuse.js && node --check src/reflex/files.js && node --check src/reflex/hints.js && node --check src/reflex/shadow.js && node --check src/reflex/stats.js && node --check src/reflex/report.js && node --check src/reflex/runtime.js && node --check src/reflex/workspace.js && node --check src/reflex/codex-integration.js && node --check src/reflex/doctor.js && node --check src/reflex/rotate.js && node --check src/hooks/reflex-hook.js && node --check scripts/codex-integration.mjs && node --check scripts/repo-publish.mjs && node --test"
   },
   "repository": {
     "type": "git",

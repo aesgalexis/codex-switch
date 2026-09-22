@@ -21,38 +21,68 @@ Do not expand model routing until the reflex path is working.
 
 ## Phase 1 - observe hooks
 
-Goal: learn what Codex actually does before suppressing anything.
+Status: initial implementation complete and producing real Codex CLI telemetry;
+continued real-session measurement is next.
 
-Build:
+Implemented:
 
-- hook entrypoint
-- parse `PreToolUse` and `PostToolUse`
-- structured local event log with no secrets
-- tool/command classification
-- metrics for repeated read-only checks
+- project-scoped Bash `PreToolUse` and `PostToolUse` hooks
+- hook entrypoint with fail-open behavior
+- tiny read-only command allowlist
+- structured local JSONL event log
+- semantic command keys instead of raw commands
+- hashed session, turn, and tool-use identifiers
+- no tool-response contents
+- repetition counts and timing metrics via `npm run reflex:stats`
+- verified Windows hook command for Codex CLI
+
+Observed in real use:
+
+- the first same-session repeated check was `git rev-parse HEAD`
+- the repeat interval was 124.707 seconds (approximately 125 seconds)
+- safe semicolon compounds were common enough to justify exact, allowlist-bound
+  compound reuse in Phase 3
+
+Current client boundary:
+
+- Codex CLI traverses the Bash `PreToolUse` and `PostToolUse` lifecycle used by
+  the observer
+- Codex Desktop currently uses a specialized `custom_tool_call: exec` route
+  that does not traverse this lifecycle path, so reliable Phase 1 measurement
+  is being performed in CLI
 
 Behavior:
 
 - never block
-- never rewrite
-- never reuse
+- observation itself does not rewrite or reuse; the later Phase 3 pilot adds
+  the narrowly scoped applied behavior
 
 Success criterion:
 
-We can answer: which orientation checks Codex repeats, how often, and how close together?
+Collect enough normal CLI sessions to answer which orientation checks Codex
+repeats, how often, and how close together. Broader normal-session usage is still
+needed to assess which applied candidates produce meaningful savings.
 
 ## Phase 2 - deterministic evidence store
 
+Status: initial shadow implementation complete; real-session validation in
+progress. No command is suppressed.
+
 Goal: answer exact repeated checks without Jev.
 
-Build:
+Implemented in shadow mode:
 
-- in-memory evidence store
-- repo identity
-- workspace generation
-- provenance
-- freshness rules
-- allowlist for simple read-only Git/shell checks
+- bounded local evidence store under `.model-switch/`
+- hashed workspace/repository identity
+- identity, workspace, and external generations advanced according to mutation scope
+- provenance, timestamps, sessions, command and response fingerprints
+- exact same-session candidates validated against their domain generations
+- stale-after-mutation decisions
+- broader conservative Git, filesystem, runtime, GitHub, Firebase, and gcloud
+  read-only classification
+- safe semicolon-only compound decomposition
+- redacted unknown-command diagnostics and expanded statistics
+- optional bounded Jev sufficiency judgments for related evidence
 
 Initial candidates:
 
@@ -61,23 +91,41 @@ Initial candidates:
 - HEAD
 - selected clean/dirty checks
 
-Behavior:
+Current behavior:
 
-- observe first
-- add a dry-run decision showing when a call *could* have been reused
+- observe and persist bounded evidence
+- calculate deterministic and semantic shadow decisions
+- apply only the explicit Phase 3 deterministic allowlist
 
 Success criterion:
 
-Manual review shows the deterministic reuse decisions are correct.
+Enough real-session review shows deterministic and semantic shadow decisions,
+generation invalidation, and redaction behavior are correct.
 
 ## Phase 3 - safe reuse
 
+Status: conservative deterministic allowlist implemented.
+
 Goal: actually avoid a tiny set of redundant deterministic checks.
+
+Enabled only for exact repeats of:
+
+- `git rev-parse HEAD`
+- `git branch --show-current`
+- `git rev-parse --show-toplevel`
+- selected `git status` and `git diff` forms
+- complete file reads and searches
+- safe semicolon compounds whose every component is independently in this list
+
+The implementation uses the supported `PreToolUse` `updatedInput.command`
+mechanism to replace the redundant Git query with a shell-native output command.
+All other commands remain observe/shadow-only. Read-only classification by itself
+never grants applied reuse.
 
 Enable reuse only for calls with:
 
 - exact recognized semantics
-- fresh same-generation evidence
+- fresh evidence in every relevant validity domain
 - no ambiguity
 - no mutation risk
 
@@ -117,13 +165,17 @@ Jev saves additional checks without becoming a second agent.
 
 ## Phase 5 - prompt-time state hinting
 
+Status: initial reversible experiment implemented.
+
 Goal: reduce re-orientation before Codex even chooses a tool.
 
-Experiment with `UserPromptSubmit`:
+Implemented with `UserPromptSubmit`:
 
 - select only relevant fresh facts
-- inject tiny additional context
-- measure whether redundant checks decrease
+- emit the documented `additionalContext` hook output in `inject` mode
+- support `off | observe | inject`, defaulting conservatively to `observe`
+- correlate injected facts with subsequent orientation checks and fallback reuse
+- compare turns with and without hints as real CLI data accumulates
 
 Do not inject the entire evidence store.
 
@@ -174,3 +226,13 @@ The first useful demo should be deliberately boring:
 6. model-switch returns/reuses it without another subprocess.
 
 Then expand one behavior at a time.
+
+## Immediate next objective
+
+1. Collect comparable CLI turns with prompt hints off/observed and injected.
+2. Measure whether HEAD, branch, and root orientation checks actually decrease.
+3. Audit classifier misses, redaction, provenance, and generation invalidation.
+4. Keep applied reuse limited to the current deterministic allowlist and review
+   every proposed expansion against real usage.
+5. Keep Jev limited to bounded semantic decisions where deterministic local
+   facts cannot decide safely.
