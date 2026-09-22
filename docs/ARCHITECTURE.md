@@ -293,9 +293,25 @@ Useful measurements:
 
 The first milestone should optimize observability before optimization.
 
+Each new event records a compact `reflexRuntime` value: package version plus a
+manually advanced reflex capability revision. The stats report groups unmarked
+historical events as `legacy-unmarked`; it does not rewrite old logs. The
+`reflex:doctor` command checks local hooks, runtime configuration, and state
+readability. `reflex:rotate` renames only the active event log inside
+`.model-switch/`, leaving evidence state and prior logs intact.
+
 The observer is producing real local telemetry. Applied reuse currently covers
 three exact Git identity facts, selected status/diff forms, full-file reads,
 searches, and exact compounds composed exclusively from those candidates. The
 rewrite avoids underlying subprocess work while retaining the outer Bash tool
 call. Prompt hints are a separate experiment aimed at preventing that outer
 orientation call before it is chosen.
+
+Complete file reads inside the workspace record a hashed file dependency.
+Known `apply_patch`, `Edit`, and `Write` targets advance that file's generation;
+unknown or broader workspace mutations invalidate all file dependencies.
+Immediately before reuse, a `size`/`mtimeNs` snapshot is compared with the
+observed file; mismatch, deletion, or an unreadable stat fails open.
+Searches, listings, status, diff, and compounds still depend on the workspace
+generation. Safe compounds use a canonical sequence that ignores only separator
+spacing between their recognized commands; order and arguments remain significant.

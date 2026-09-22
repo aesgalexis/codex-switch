@@ -10,6 +10,7 @@ const SHELL_READ_ONLY = new Map([
   ["cat", "fs.read"], ["type", "fs.read"], ["get-content", "fs.read"], ["gc", "fs.read"],
   ["findstr", "fs.search"], ["select-string", "fs.search"], ["rg", "fs.search"],
   ["test-path", "fs.exists"], ["get-item", "fs.metadata"], ["get-itemproperty", "fs.metadata"],
+  ["get-filehash", "fs.hash"],
   ["stat", "fs.metadata"], ["resolve-path", "fs.metadata"], ["where", "fs.search"],
   ["where.exe", "fs.search"], ["head", "fs.read"], ["tail", "fs.read"], ["wc", "fs.read"],
 ]);
@@ -139,7 +140,7 @@ function classifyGit(command, tokens) {
 function classifyNpm(command, tokens) {
   const sub = tokens[1];
   if (["--version", "-v"].includes(sub)) return operation(command, { key: "runtime.npm.version", family: "npm", access: "read-only" });
-  if (sub === "run" && tokens[2] === "reflex:stats" && tokens.length === 3) return operation(command, { key: "model-switch.reflex.stats", family: "npm", access: "read-only" });
+  if (sub === "run" && ["reflex:stats", "reflex:doctor"].includes(tokens[2]) && tokens.length === 3) return operation(command, { key: `model-switch.${tokens[2].replace(":", ".")}`, family: "npm", access: "read-only" });
   if (["ls", "list", "view", "info", "explain", "outdated", "doctor", "help"].includes(sub)) {
     return operation(command, { key: `npm.${sub}`, family: "npm", access: "read-only" });
   }
@@ -193,13 +194,22 @@ export function classifySimpleCommand(command) {
     const mutating = tokens.some((token) => ["-delete", "-exec", "-execdir", "-ok", "-okdir"].includes(token));
     return operation(command, { key: mutating ? null : "fs.search", family: "filesystem", access: mutating ? "mutating" : "read-only", reason: mutating ? "find.action" : null });
   }
-  if (SHELL_READ_ONLY.has(executable)) return operation(command, { key: SHELL_READ_ONLY.get(executable), family: executable === "rg" ? "search" : "filesystem", access: "read-only" });
+  if (SHELL_READ_ONLY.has(executable)) {
+    if (/\b(?:env|variable|function|alias|registry|cert):/i.test(normalized)) {
+      return operation(command, { family: "powershell", access: "unknown", reason: "powershell.provider" });
+    }
+    return operation(command, { key: SHELL_READ_ONLY.get(executable), family: executable === "rg" ? "search" : "filesystem", access: "read-only" });
+  }
   if (SHELL_MUTATING.has(executable)) return operation(command, { family: "filesystem", access: "mutating", reason: "filesystem.write" });
   return operation(command, { family: executable, access: "unknown" });
 }
 
-function splitSafeSemicolons(command) {
-  const parts = [];
+const POWERSHELL_READ_ONLY_PIPELINE = new Map([
+  ["select-object", "powershell.select-object"],
+]);
+
+function splitPowerShellComposition(command) {
+  const groups = [[]];
   let current = "";
   let quote = null;
   for (let index = 0; index < command.length; index += 1) {
@@ -214,18 +224,36 @@ function splitSafeSemicolons(command) {
       current += char;
       continue;
     }
-    if (char === "\r" || char === "\n" || char === "|" || char === ">" || char === "<" || char === "`" || char === "&" || char === "$" || char === "{" || char === "}") {
-      return { safe: false, parts: [] };
+    if (char === "\r" || char === "\n" || char === ">" || char === "<" || char === "`" || char === "&" || char === "$" || char === "{" || char === "}") {
+      return { safe: false, groups: [] };
+    }
+    if (char === "|") {
+      if (command[index + 1] === "|" || command[index + 1] === "&" || !current.trim()) return { safe: false, groups: [] };
+      groups.at(-1).push(current.trim());
+      current = "";
+      continue;
     }
     if (char === ";") {
-      if (current.trim()) parts.push(current.trim());
+      if (!current.trim()) return { safe: false, groups: [] };
+      groups.at(-1).push(current.trim());
+      groups.push([]);
       current = "";
-    } else current += char;
+      continue;
+    }
+    current += char;
   }
-  if (quote) return { safe: false, parts: [] };
-  if (current.trim()) parts.push(current.trim());
-  if (parts.some((part) => /^(if|else|elseif|for|foreach|while|switch|try|catch|finally)\b/i.test(part))) return { safe: false, parts: [] };
-  return { safe: true, parts };
+  if (quote || !current.trim()) return { safe: false, groups: [] };
+  groups.at(-1).push(current.trim());
+  if (groups.some((group) => group.length === 0 || group.some((part) => /^(if|else|elseif|for|foreach|while|switch|try|catch|finally)\b/i.test(part)))) {
+    return { safe: false, groups: [] };
+  }
+  return { safe: true, groups };
+}
+
+function classifyPipelineStage(command) {
+  const executable = tokenize(normalize(command))[0]?.toLowerCase();
+  const key = POWERSHELL_READ_ONLY_PIPELINE.get(executable);
+  return key ? operation(command, { key, family: "powershell", access: "read-only" }) : null;
 }
 
 export function classifyBashCommand(command) {
@@ -238,17 +266,40 @@ export function classifyBashCommand(command) {
     const classified = classifySimpleCommand(normalized);
     return { ...classified, compound: false, safeCompound: false, operations: [classified], potentiallyMutating: classified.access !== "read-only" };
   }
-  const split = splitSafeSemicolons(command);
-  if (!split.safe || split.parts.length < 2) {
+  const composition = splitPowerShellComposition(command);
+  if (!composition.safe) {
     return { eligible: false, kind: "compound-unsafe", key: null, family: "compound", access: "unknown", compound: true, safeCompound: false, operations: [], potentiallyMutating: true };
   }
-  const operations = split.parts.map(classifySimpleCommand);
+  const operations = [];
+  for (const group of composition.groups) {
+    const source = classifySimpleCommand(group[0]);
+    if (group.length > 1 && (source.access !== "read-only" || !source.eligible)) {
+      return { eligible: false, kind: "compound-unsafe", key: null, family: "compound", access: "unknown", compound: true, safeCompound: false, operations: [], potentiallyMutating: true };
+    }
+    operations.push(source);
+    for (const stage of group.slice(1)) {
+      const classified = classifyPipelineStage(stage);
+      if (!classified) {
+        return { eligible: false, kind: "compound-unsafe", key: null, family: "compound", access: "unknown", compound: true, safeCompound: false, operations: [], potentiallyMutating: true };
+      }
+      operations.push(classified);
+    }
+  }
+  if (operations.length < 2) {
+    const classified = operations[0];
+    return { ...classified, compound: false, safeCompound: false, operations, potentiallyMutating: classified.access !== "read-only" };
+  }
   return {
     eligible: operations.every((item) => item.eligible), kind: "compound", key: null,
     family: "compound", access: operations.every((item) => item.access === "read-only") ? "read-only" : "mixed",
     compound: true, safeCompound: true, operations,
     potentiallyMutating: operations.some((item) => item.access !== "read-only"),
   };
+}
+
+export function safeCompoundIdentity(classification, command) {
+  if (!classification?.safeCompound || classification.operations.length < 2) return command;
+  return normalize(command).replace(/\s*;\s*/g, ";").replace(/\s*\|\s*/g, "|");
 }
 
 export const recognizedReadOnlyChecks = Object.freeze({

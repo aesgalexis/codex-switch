@@ -42,6 +42,9 @@ test("summarizes operations, repeats, compounds, mutations, and shadow savings",
   assert.equal(summary.actualReuse, 1);
   assert.equal(summary.operationsServedFromCache, 1);
   assert.equal(summary.gitSubprocessesAvoided, 1);
+  assert.equal(summary.subprocessExecutionsAvoided, 1);
+  assert.equal(summary.bytesServedFromEvidence, 0);
+  assert.deepEqual(summary.cacheHitRateByCommand["git.head"], { observed: 2, hits: 1, rate: 50 });
   assert.equal(summary.percentReadOnlyOperationsServedFromCache, 33.33);
   assert.equal(summary.toolCallsAvoidedByPreToolReuse, 0);
   assert.equal(summary.reuseFallbacks, 1);
@@ -68,6 +71,19 @@ test("correlates injected prompt facts with orientation checks in the same turn"
   assert.equal(summary.promptHints.orientationChecksAfterHint.headAfterHeadHint, 1);
   assert.equal(summary.promptHints.orientationChecksAfterHint.fallbackActualReuse, 1);
   assert.equal(summary.promptHints.orientationChecksAfterHint.statusAfterWorkingTreeHint, 1);
+  assert.deepEqual(summary.promptHints.followupsByFact["git.working-tree"], { injectedTurns: 1, matchingChecksAfter: 1, turnsWithMatchingCheck: 1 });
   assert.deepEqual(summary.toolCallsPerPromptTurn.withHint, { turns: 1, min: 3, avg: 3, max: 3 });
   assert.equal(summary.promptHints.estimatedChecksAvoided, null);
+});
+
+test("correlates orientation followups when hook turn identifiers differ", () => {
+  const events = [
+    { event: "UserPromptSubmit", at: "2026-09-21T10:00:00.000Z", session: "s", turn: "prompt-turn", hintInjected: true, hintFacts: ["workspace.cwd", "git.branch.current", "git.changed-files"] },
+    { event: "PreToolUse", at: "2026-09-21T10:00:01.000Z", session: "s", turn: "tool-turn-1", operations: [{ key: "workspace.pwd" }] },
+    { event: "PreToolUse", at: "2026-09-21T10:00:02.000Z", session: "s", turn: "tool-turn-2", operations: [{ key: "git.branch.current" }, { key: "git.status.short" }] },
+  ];
+  const followups = summarizeReflexEvents(events).promptHints.followupsByFact;
+  assert.deepEqual(followups["workspace.cwd"], { injectedTurns: 1, matchingChecksAfter: 1, turnsWithMatchingCheck: 1 });
+  assert.deepEqual(followups["git.branch.current"], { injectedTurns: 1, matchingChecksAfter: 1, turnsWithMatchingCheck: 1 });
+  assert.deepEqual(followups["git.changed-files"], { injectedTurns: 1, matchingChecksAfter: 1, turnsWithMatchingCheck: 1 });
 });

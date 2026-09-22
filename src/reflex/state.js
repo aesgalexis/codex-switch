@@ -8,8 +8,8 @@ const DEFAULT_CACHE_MAX_BYTES = 32768;
 const IDENTITY_KINDS = new Set(["git.head", "git.root", "git.branch.current"]);
 const EXTERNAL_FAMILIES = new Set(["gh", "firebase", "gcloud"]);
 const CACHEABLE_OUTPUT_KINDS = new Set([
-  "git.status.short", "git.status.porcelain", "git.diff.worktree", "git.diff.cached",
-  "fs.read", "fs.search", "shell.compound.readonly",
+  "git.status.short", "git.status.porcelain", "git.status.full", "git.diff.worktree", "git.diff.cached",
+  "fs.read", "fs.search", "fs.list", "shell.compound.readonly",
 ]);
 
 export function statePath() {
@@ -21,6 +21,7 @@ export function emptyState(workspaceId = null) {
     schema: 2, workspaceGeneration: 0,
     generations: { identity: 0, workspace: 0, external: 0 },
     workspaceId, updatedAt: null, evidence: [], pending: {},
+    fileGenerations: {}, allFilesGeneration: 0,
   };
 }
 
@@ -36,6 +37,8 @@ function normalizedState(parsed, workspaceId) {
     workspaceId: parsed.workspaceId ?? workspaceId,
     evidence: Array.isArray(parsed.evidence) ? parsed.evidence : [],
     pending: parsed.pending && typeof parsed.pending === "object" ? parsed.pending : {},
+    fileGenerations: parsed.fileGenerations && typeof parsed.fileGenerations === "object" ? parsed.fileGenerations : {},
+    allFilesGeneration: Number.isInteger(parsed.allFilesGeneration) ? parsed.allFilesGeneration : 0,
   };
 }
 
@@ -100,12 +103,30 @@ export function currentGeneration(state, domain) {
 }
 
 export function evidenceIsCurrent(state, evidence) {
+  if (evidence.fileKey) {
+    return evidence.fileGeneration === (state.fileGenerations?.[evidence.fileKey] ?? 0) &&
+      evidence.allFilesGeneration === (state.allFilesGeneration ?? 0);
+  }
   if (evidence.generations && typeof evidence.generations === "object") {
     return Object.entries(evidence.generations).every(([domain, observed]) => observed === currentGeneration(state, domain));
   }
   const domain = evidence.generationDomain ?? evidenceDomain(evidence.kind, evidence.provenance?.family);
   const observed = Number.isInteger(evidence.generation) ? evidence.generation : evidence.workspaceGeneration;
   return observed === currentGeneration(state, domain);
+}
+
+export function advanceFileGenerations(state, keys) {
+  if (!Array.isArray(keys)) {
+    state.allFilesGeneration = (state.allFilesGeneration ?? 0) + 1;
+    state.fileGenerations = {};
+    return;
+  }
+  state.fileGenerations ??= {};
+  for (const key of keys) state.fileGenerations[key] = (state.fileGenerations[key] ?? 0) + 1;
+  if (Object.keys(state.fileGenerations).length > 500) {
+    state.allFilesGeneration = (state.allFilesGeneration ?? 0) + 1;
+    state.fileGenerations = {};
+  }
 }
 
 export function exactEvidence(state, { session, commandHash }) {
@@ -184,7 +205,7 @@ export function outputStorageReason(operation, command, output) {
   return "stored";
 }
 
-export function evidenceFromObservation({ operation, command, output, at, session, tool, generations, generationDomains, workspaceGeneration, generation, workspaceId }) {
+export function evidenceFromObservation({ operation, command, commandHash, output, at, session, tool, generations, generationDomains, workspaceGeneration, generation, workspaceId, fileKey, fileFreshness, fileGeneration, allFilesGeneration }) {
   const scalars = new Set(["git.head", "git.root", "git.branch.current", "runtime.node.version", "runtime.npm.version", "workspace.pwd"]);
   const normalized = typeof output === "string" ? output : JSON.stringify(output ?? null);
   const domain = evidenceDomain(operation.key, operation.family);
@@ -197,9 +218,10 @@ export function evidenceFromObservation({ operation, command, output, at, sessio
     timestamp: at, session,
     provenance: {
       tool, family: operation.family, commandKey: operation.key,
-      commandHash: fingerprint(command), responseFingerprint: fingerprint(normalized),
+      commandHash: commandHash ?? fingerprint(command), responseFingerprint: fingerprint(normalized),
     },
     generationDomain: domain,
+    ...(fileKey ? { fileKey, fileFreshness, fileGeneration, allFilesGeneration } : {}),
     generation: generations?.[domain] ?? workspaceGeneration ?? generation ?? 0,
     ...(Array.isArray(generationDomains) && generationDomains.length > 0
       ? { generations: Object.fromEntries(generationDomains.map((item) => [item, generations?.[item] ?? workspaceGeneration ?? generation ?? 0])) }

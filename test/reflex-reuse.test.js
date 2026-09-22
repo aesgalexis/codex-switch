@@ -54,10 +54,12 @@ test("identity mutation invalidates HEAD", () => {
 for (const [name, command, key, value] of [
   ["status", "git status --short", "git.status.short", " M README.md\n"],
   ["porcelain", "git status --porcelain=v1", "git.status.porcelain", "?? new.txt\n"],
+  ["full status", "git status", "git.status.full", "On branch main\n"],
   ["diff", "git diff", "git.diff.worktree", "diff --git a/a b/a\n"],
   ["cached diff", "git diff --cached", "git.diff.cached", ""],
   ["file read", "Get-Content -Raw README.md", "fs.read", "# model-switch\n"],
   ["search", "rg -n hooks src", "fs.search", "src/a.js:1:hooks\n"],
+  ["simple listing", "Get-ChildItem src", "fs.list", "a.js\n"],
 ]) {
   test(`${name} reuses exact fresh output`, () => assert.equal(plan(command, key, stateWith(command, key, value)).outcome, "actual_reuse"));
   test(`${name} is invalidated by a workspace mutation`, () => {
@@ -70,6 +72,7 @@ for (const [name, command, key, value] of [
 test("partial file reads and ineligible operations report explicit rejection reasons", () => {
   const partial = plan("Get-Content README.md -TotalCount 5", "fs.read", stateWith("Get-Content README.md -TotalCount 5", "fs.read", "x"));
   assert.deepEqual(partial, { outcome: "not_candidate", reason: "partial_file_read" });
+  assert.equal(plan("Get-ChildItem -Recurse src", "fs.list", stateWith("Get-ChildItem -Recurse src", "fs.list", "x")).reason, "complex_listing");
   const compound = operation("git status --short; git diff", "git.status.short");
   compound.eligible = false;
   assert.deepEqual(safePlanActualReuse({ evidence: [] }, { operation: compound, session, commandHash: "x" }), { outcome: "not_candidate", reason: "ineligible_operation" });

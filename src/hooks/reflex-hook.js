@@ -1,10 +1,12 @@
-import { classifyBashCommand } from "../reflex/classify.js";
+import { classifyBashCommand, safeCompoundIdentity } from "../reflex/classify.js";
 import { appendReflexEvent, hashIdentifier } from "../reflex/events.js";
 import { promptHintMode, selectPromptHint, userPromptHookOutput } from "../reflex/hints.js";
 import { commandPattern, fingerprint, redactCommand } from "../reflex/privacy.js";
 import { isActualReuseCandidate, preToolUseRewrite, safePlanActualReuse } from "../reflex/reuse.js";
-import { advanceGenerations, consumePending, evidenceFromObservation, outputStorageReason, readReflexState, recordPending, withReflexStateLock, writeReflexState } from "../reflex/state.js";
+import { advanceFileGenerations, advanceGenerations, consumePending, evidenceFromObservation, outputStorageReason, readReflexState, recordPending, withReflexStateLock, writeReflexState } from "../reflex/state.js";
 import { deterministicShadow, semanticShadow } from "../reflex/shadow.js";
+import { REFLEX_RUNTIME } from "../reflex/runtime.js";
+import { editedFileKeys, fileFreshness, fullFileReadInfo } from "../reflex/files.js";
 
 async function readStdin() {
   let raw = "";
@@ -105,13 +107,14 @@ async function main() {
     const mode = promptHintMode();
     let hint = { facts: [], text: null };
     try {
-      hint = mode === "off" ? hint : selectPromptHint(state, { session, prompt: input?.prompt });
+      hint = mode === "off" ? hint : selectPromptHint(state, { session, prompt: input?.prompt, cwd: workspacePath });
     } catch {
       hint = { facts: [], text: null };
     }
     const injected = mode === "inject" && Boolean(hint.text);
     await appendReflexEvent({
       schema: 2,
+      reflexRuntime: REFLEX_RUNTIME,
       at: new Date().toISOString(),
       event: eventName,
       session,
@@ -140,9 +143,9 @@ async function main() {
     let pendingMetadata = {};
     const compound = compoundOperation(classification, command);
     if (compound) {
-      compoundReuse = safePlanActualReuse(state, { operation: compound, session, commandHash: fingerprint(command) });
+      compoundReuse = safePlanActualReuse(state, { operation: compound, session, commandHash: fingerprint(safeCompoundIdentity(classification, command)) });
       if (compoundReuse.outcome === "actual_reuse") {
-        pendingMetadata = { actualReuse: { key: compoundReuse.key, evidenceGeneration: compoundReuse.evidenceGeneration } };
+        pendingMetadata = { actualReuse: { key: compoundReuse.key, evidenceGeneration: compoundReuse.evidenceGeneration, valueBytes: compoundReuse.valueBytes } };
         hookResponse = preToolUseRewrite(compoundReuse.updatedCommand);
       }
     } else if (classification.compound) {
@@ -164,14 +167,14 @@ async function main() {
         };
       } else if (classification.operations.length === 1) {
         {
-          const reuse = safePlanActualReuse(state, { operation, session, commandHash });
+          const reuse = safePlanActualReuse(state, { operation, session, commandHash, cwd: workspacePath });
           operations[index].actualReuse = {
             outcome: reuse.outcome, reason: reuse.reason ?? null,
             evidenceGeneration: reuse.evidenceGeneration ?? null,
             evidenceTimestamp: reuse.evidenceTimestamp ?? null,
           };
           if (reuse.outcome === "actual_reuse") {
-            pendingMetadata = { actualReuse: { key: reuse.key, evidenceGeneration: reuse.evidenceGeneration } };
+            pendingMetadata = { actualReuse: { key: reuse.key, evidenceGeneration: reuse.evidenceGeneration, valueBytes: reuse.valueBytes } };
             hookResponse = preToolUseRewrite(reuse.updatedCommand);
           }
         }
@@ -184,7 +187,11 @@ async function main() {
         }
       }
     }
-    recordPending(state, toolUse, new Date().toISOString(), pendingMetadata);
+    recordPending(state, toolUse, new Date().toISOString(), {
+      ...pendingMetadata,
+      fileGenerations: { ...state.fileGenerations },
+      allFilesGeneration: state.allFilesGeneration,
+    });
     await writeReflexState(state);
   } else {
     const response = input?.tool_response;
@@ -197,16 +204,27 @@ async function main() {
     }
     const invalidated = reused ? [] : invalidationDomains(classification, toolName);
     advanceGenerations(state, invalidated);
+    if (invalidated.includes("workspace")) {
+      advanceFileGenerations(state, editedFileKeys(toolName, input?.tool_input, workspacePath));
+    }
     const compound = compoundOperation(classification, command);
     if (!reused && responseSucceeded(response) && (compound || (!classification.compound && classification.operations.length === 1 && classification.operations[0].eligible))) {
       const observedOperation = compound ?? classification.operations[0];
+      const fileRead = !compound && observedOperation.key === "fs.read"
+        ? fullFileReadInfo(observedOperation.command, workspacePath) : null;
+      const fileKey = fileRead?.key ?? null;
       evidenceStorage = outputStorageReason(observedOperation, observedOperation.command, responseOutput(response));
       state.evidence.push(evidenceFromObservation({
         operation: observedOperation, command: observedOperation.command,
+        commandHash: compound ? fingerprint(safeCompoundIdentity(classification, command)) : null,
         output: responseOutput(response), at: new Date().toISOString(), session, tool: toolName,
         generations: observationGenerations,
         generationDomains: compound ? compoundGenerationDomains(classification) : null,
         workspaceGeneration: observationGeneration, workspaceId,
+        fileKey,
+        fileFreshness: fileRead ? fileFreshness(fileRead.path) : null,
+        fileGeneration: fileKey ? (pending?.fileGenerations?.[fileKey] ?? state.fileGenerations?.[fileKey] ?? 0) : null,
+        allFilesGeneration: fileKey ? (pending?.allFilesGeneration ?? state.allFilesGeneration ?? 0) : null,
       }));
     }
     await writeReflexState(state);
@@ -214,6 +232,7 @@ async function main() {
 
   await appendReflexEvent({
     schema: 2,
+    reflexRuntime: REFLEX_RUNTIME,
     at: new Date().toISOString(),
     event: eventName,
     tool: toolName,

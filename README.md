@@ -245,10 +245,24 @@ orientation checks were observed:
 npm run reflex:stats
 ```
 
+For a quick local health check, run `npm run reflex:doctor`. It shows the Codex
+version, branch, project hook configuration, hint/Jev modes, telemetry paths and
+sizes, and whether the evidence state is readable. It checks the hook file but
+cannot verify whether Codex has trusted this project's hooks.
+
+To start a fresh measurement window, run `npm run reflex:rotate`. It renames the
+current event log with a UTC timestamp inside `.model-switch/`, preserves the
+adjacent evidence state, and leaves all earlier rotations in place. It succeeds
+when no log exists. Rotation refuses a `MODEL_SWITCH_REFLEX_LOG` outside
+`.model-switch/`; move that log manually if you use a custom external path.
+
 The local event log is written to `.model-switch/reflex-events.jsonl`; evidence
 and generation state are written to `.model-switch/reflex-state.json`. Both are
 ignored by Git. Set `MODEL_SWITCH_REFLEX_LOG` to relocate the event log and its
 adjacent state file.
+New events carry a compact `reflexRuntime` marker (package version plus reflex
+capability revision); older unmarked events appear as `legacy-unmarked` in
+`npm run reflex:stats`. This preserves the existing history without migration.
 
 Recognized operations include explicit Git queries (`status`, `diff`, branch
 queries, `rev-parse`, `log`, `show`, refs and config reads), filesystem reads,
@@ -269,10 +283,11 @@ subprocess work but does not remove the surrounding Codex Bash tool call.
 
 `UserPromptSubmit` can add a separate preventive layer. Set
 `MODEL_SWITCH_PROMPT_HINT_MODE=inject` to provide a short official
-`additionalContext` block containing only valid same-session,
+`additionalContext` block containing only fresh same-workspace,
 same-domain-generation repo root, branch, HEAD, and bounded working-tree facts.
-The default `observe` mode computes the
-candidate without changing model context; `off` disables it. Facts older than
+The default `inject` mode includes a bounded workspace location even before
+Git evidence exists for a repository task. `observe` computes the candidate
+without changing model context; `off` disables it. Facts older than
 `MODEL_SWITCH_PROMPT_HINT_MAX_AGE_MS` are excluded. This may prevent Codex from
 choosing an orientation tool call; unlike the PreToolUse fallback, such a
 prevention would save the outer tool call as well as its Git subprocess.
@@ -300,6 +315,10 @@ checks are estimated separately only when both cohorts are available.
 `reuseRejectionsByReason` and `repeatedChecksByReuseOutcome` explain why observed
 or repeated operations were not served, including unsupported kinds, missing or
 stale evidence, partial reads, unsafe compounds, and invalid cached output.
+The report also records hit rate by command, bytes served from evidence,
+subprocess executions avoided, and matching orientation checks after each
+injected fact. It does not claim an outer Codex tool call was avoided without
+evidence for that counterfactual.
 
 Every operation not proven read-only advances one or more domain generations
 after `PostToolUse`. File edits, tests, and builds invalidate workspace evidence;
@@ -311,6 +330,17 @@ When `TYPESAFE_API_KEY` is available, the hook may ask Jev one bounded semantic
 question for related evidence in shadow mode. Jev never receives command output,
 repository contents, or a transcript. See `.env.example` for its independent
 timeout, confidence threshold, and off switch.
+The shadow gate defaults to on when the key exists; Jev decisions are never
+applied to reuse. Exact supported read-only reuse is enabled by default with
+fresh same-session/workspace evidence and the 32 KiB output limit above.
+
+Complete file reads also record a normalized in-workspace path dependency and a
+small `size`/`mtime` snapshot. Known edits invalidate only their paths; before a
+cached read is served, the snapshot is checked again. A changed, deleted, or
+unstatable file executes normally. Simple PowerShell inspection pipelines are
+recognized only when the source is allowlisted read-only and every following
+stage is a bounded `Select-Object`; dynamic expressions, providers holding
+credentials, redirections, scripts, and mutating cmdlets remain fail-open.
 
 ## Existing router quick start
 

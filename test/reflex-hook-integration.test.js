@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -131,6 +131,20 @@ test("hook learns and reuses an exact read-only compound until a dependency chan
   }
 });
 
+test("safe compound spacing is equivalent, while order and arguments remain distinct", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "model-switch-compound-identity-"));
+  const logPath = path.join(directory, "events.jsonl");
+  const command = "git status --short; git diff --stat";
+  try {
+    invokeHook(hookInput("PreToolUse", command, "identity-first"), logPath);
+    invokeHook(hookInput("PostToolUse", command, "identity-first", { exit_code: 0, output: " M README.md\n README.md | 1 +\n" }), logPath);
+    assert.notEqual(invokeHook(hookInput("PreToolUse", "git  status --short ;git diff --stat", "identity-spaces"), logPath), "");
+    assert.equal(invokeHook(hookInput("PreToolUse", "git diff --stat; git status --short", "identity-order"), logPath), "");
+    assert.equal(invokeHook(hookInput("PreToolUse", "git status --short; git diff --check", "identity-args"), logPath), "");
+    assert.equal(invokeHook(hookInput("PreToolUse", "git status --short | git diff --stat", "identity-pipe"), logPath), "");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("parallel observations preserve both cached reads", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "model-switch-parallel-"));
   const logPath = path.join(directory, "events.jsonl");
@@ -146,6 +160,60 @@ test("parallel observations preserve both cached reads", async () => {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("local and external reads do not invalidate cached status", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "model-switch-status-read-"));
+  const logPath = path.join(directory, "events.jsonl");
+  try {
+    const status = hookInput("PostToolUse", "git status --short", "status-observe", { exit_code: 0, output: " M README.md\n" });
+    status.cwd = directory;
+    invokeHook(status, logPath);
+
+    const metadata = hookInput("PostToolUse", "Get-Item package.json", "metadata-read", { exit_code: 0, output: "package.json\n" });
+    metadata.cwd = directory;
+    invokeHook(metadata, logPath);
+    const afterLocalRead = hookInput("PreToolUse", "git status --short", "status-after-local", null);
+    afterLocalRead.cwd = directory;
+    assert.notEqual(invokeHook(afterLocalRead, logPath), "");
+
+    const external = hookInput("PostToolUse", "gh pr view 123", "external-read", { exit_code: 0, output: "PR 123\n" });
+    external.cwd = directory;
+    invokeHook(external, logPath);
+    const afterExternalRead = hookInput("PreToolUse", "git status --short", "status-after-external", null);
+    afterExternalRead.cwd = directory;
+    assert.notEqual(invokeHook(afterExternalRead, logPath), "");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("editing another file preserves a complete read; editing the file invalidates it", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "model-switch-file-generation-"));
+  const logPath = path.join(directory, "events.jsonl");
+  const readCommand = "Get-Content src/foo.js";
+  const edit = (name, id) => {
+    const patch = `*** Begin Patch\n*** Update File: ${name}\n@@\n-old\n+new\n*** End Patch`;
+    const input = hookInput("PostToolUse", patch, id, { exit_code: 0, output: "Success" });
+    input.tool_name = "apply_patch";
+    input.cwd = directory;
+    return input;
+  };
+  try {
+    await mkdir(path.join(directory, "src"));
+    await writeFile(path.join(directory, "src", "foo.js"), "export const x = 1;\n", "utf8");
+    const input = (event, command, id, response) => {
+      const value = hookInput(event, command, id, response);
+      value.cwd = directory;
+      return value;
+    };
+    invokeHook(input("PreToolUse", readCommand, "read-first"), logPath);
+    invokeHook(input("PostToolUse", readCommand, "read-first", { exit_code: 0, output: "export const x = 1;\n" }), logPath);
+    invokeHook(edit("README.md", "other-edit"), logPath);
+    assert.notEqual(invokeHook(input("PreToolUse", readCommand, "read-after-other"), logPath), "");
+    invokeHook(edit("src/foo.js", "same-edit"), logPath);
+    assert.equal(invokeHook(input("PreToolUse", readCommand, "read-after-same"), logPath), "");
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("hook does not widen reuse through a compound with unsupported operations", async () => {
@@ -184,7 +252,7 @@ test("UserPromptSubmit injects only fresh facts and records no prompt text", asy
     assert.match(context, /branch: feature\/hints/);
     assert.match(context, new RegExp(`head: ${head}`));
     assert.match(context, /working_tree: dirty/);
-    assert.match(context, /changed_files: 2/);
+    assert.match(context, /modified: README\.md, notes\.txt/);
     assert.equal(context.includes("TOKEN"), false);
 
     const events = (await readFile(logPath, "utf8")).trim().split(/\r?\n/).map(JSON.parse);

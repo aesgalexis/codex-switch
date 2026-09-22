@@ -1,4 +1,5 @@
 import { evidenceIsCurrent, exactEvidence } from "./state.js";
+import { fileFreshness, fullFileReadInfo, sameFileFreshness } from "./files.js";
 
 const SCALAR_COMMANDS = new Map([
   ["git rev-parse HEAD", "git.head"],
@@ -7,8 +8,9 @@ const SCALAR_COMMANDS = new Map([
 ]);
 
 const OUTPUT_KINDS = new Set([
-  "git.status.short", "git.status.porcelain", "git.diff.worktree", "git.diff.cached",
-  "fs.read", "fs.search", "shell.compound.readonly",
+  "git.status.short", "git.status.porcelain", "git.status.full", "git.diff.worktree", "git.diff.cached",
+  "fs.read", "fs.search", "fs.list", "fs.metadata", "fs.hash", "powershell.select-object",
+  "shell.compound.readonly",
 ]);
 
 function simpleFullFileRead(command) {
@@ -23,11 +25,17 @@ function simpleFullFileRead(command) {
   return /^(get-content|gc)\s+(?:"[^"]+"|'[^']+'|\S+)$/i.test(withoutFlags);
 }
 
+function simpleList(command) {
+  return /^(?:ls|dir|gci|get-childitem)(?:\s+(?:-name|-force))?(?:\s+(?:'[^']+'|"[^"]+"|[\w./\\-]+))?$/i.test(command) &&
+    !/[|><;&`$\r\n{}*?]/.test(command);
+}
+
 export function isActualReuseCandidate(operation) {
   if (operation?.eligible !== true) return false;
   if (SCALAR_COMMANDS.get(operation.command) === operation.key) return true;
   if (!OUTPUT_KINDS.has(operation.key)) return false;
   if (operation.key === "fs.read") return simpleFullFileRead(operation.command);
+  if (operation.key === "fs.list") return simpleList(operation.command);
   return true;
 }
 
@@ -36,6 +44,7 @@ export function reuseCandidateReason(operation) {
   if (SCALAR_COMMANDS.get(operation.command) === operation.key) return null;
   if (!OUTPUT_KINDS.has(operation.key)) return "unsupported_kind";
   if (operation.key === "fs.read" && !simpleFullFileRead(operation.command)) return "partial_file_read";
+  if (operation.key === "fs.list" && !simpleList(operation.command)) return "complex_listing";
   return null;
 }
 
@@ -65,13 +74,23 @@ export function outputCommand(value, originalCommand, platform = process.platfor
   return `printf '%s' ${quotePosix(value)} || ${originalCommand}`;
 }
 
-export function planActualReuse(state, { operation, session, commandHash, platform = process.platform }) {
+export function planActualReuse(state, { operation, session, commandHash, platform = process.platform, cwd = null }) {
   const candidateReason = reuseCandidateReason(operation);
   if (candidateReason) return { outcome: "not_candidate", reason: candidateReason };
+  const requestedFile = operation.key === "fs.read" && cwd ? fullFileReadInfo(operation.command, cwd) : null;
+  const requestedFileKey = requestedFile?.key ?? null;
+  if (operation.key === "fs.read" && cwd && !requestedFile) return { outcome: "not_candidate", reason: "unsafe_file_path" };
   const evidence = exactEvidence(state, { session, commandHash });
   if (!evidence) return { outcome: "fallback", reason: "missing_evidence" };
+  if (requestedFileKey && evidence.fileKey && evidence.fileKey !== requestedFileKey) return { outcome: "fallback", reason: "file_path_mismatch" };
   if (!evidenceIsCurrent(state, evidence)) {
     return { outcome: "fallback", reason: "stale_after_mutation", evidenceGeneration: evidence.generation ?? evidence.workspaceGeneration };
+  }
+  if (requestedFile) {
+    if (!evidence.fileFreshness) return { outcome: "fallback", reason: "missing_file_freshness" };
+    if (!sameFileFreshness(evidence.fileFreshness, fileFreshness(requestedFile.path))) {
+      return { outcome: "fallback", reason: "file_changed" };
+    }
   }
   if (evidence.workspace?.id !== state.workspaceId || (operation.family === "git" && evidence.repo?.id !== state.workspaceId)) {
     return { outcome: "fallback", reason: "workspace_mismatch" };
@@ -80,6 +99,7 @@ export function planActualReuse(state, { operation, session, commandHash, platfo
   return {
     outcome: "actual_reuse", reason: "fresh_deterministic_evidence", key: operation.key,
     evidenceTimestamp: evidence.timestamp,
+    valueBytes: evidence.valueBytes ?? Buffer.byteLength(evidence.value),
     evidenceGeneration: evidence.generation ?? evidence.workspaceGeneration,
     generationDomain: evidence.generationDomain ?? null,
     updatedCommand: outputCommand(evidence.value, operation.command, platform),

@@ -32,6 +32,8 @@ function numberSummary(values) {
 }
 
 export function summarizeReflexEvents(events) {
+  const byReflexRuntime = {};
+  for (const event of events) bump(byReflexRuntime, event?.reflexRuntime ?? "legacy-unmarked");
   const preEvents = events.filter((event) => event?.event === "PreToolUse");
   const byCommand = {};
   const families = {};
@@ -58,6 +60,7 @@ export function summarizeReflexEvents(events) {
   const compoundCacheMissByCause = {};
   const notInstrumentedByCommand = {};
   const evidenceStorageByOutcome = {};
+  const missedRepeatsByCommand = {};
 
   for (const event of preEvents) {
     const operations = eventOperations(event);
@@ -95,6 +98,7 @@ export function summarizeReflexEvents(events) {
             ? (event.compoundReuse?.outcome === "actual_reuse" ? "actual_reuse" : event.compoundReuse?.reason ?? "legacy_compound_without_lookup")
             : (operation.actualReuse?.outcome === "actual_reuse" ? "actual_reuse" : operation.actualReuse?.reason ?? operation.actualReuse?.outcome ?? "legacy_without_reuse_instrumentation");
           bump(repeatedChecksByReuseOutcome, disposition);
+          if (disposition !== "actual_reuse") bump(missedRepeatsByCommand, `${operation.key}:${disposition}`);
           if (event.compound && disposition !== "actual_reuse") bump(compoundCacheMissByCause, disposition);
           if (disposition === "legacy_without_reuse_instrumentation") bump(notInstrumentedByCommand, `${operation.key}:${operation.family}`);
         }
@@ -128,12 +132,15 @@ export function summarizeReflexEvents(events) {
   const actualReuse = successfulDeliveries.length;
   const preByToolUse = new Map(preEvents.filter((event) => event.toolUse).map((event) => [event.toolUse, event]));
   let operationsServedFromCache = 0;
+  let subprocessExecutionsAvoided = 0;
+  let bytesServedFromEvidence = 0;
   for (const event of successfulDeliveries) {
     bump(actualReuseByCommand, event.actualReuseDelivery.key);
     const planned = preByToolUse.get(event.toolUse);
-    operationsServedFromCache += planned?.compound
-      ? eventOperations(planned).filter((operation) => operation.eligible).length
-      : 1;
+    const served = planned?.compound ? eventOperations(planned).filter((operation) => operation.eligible).length : 1;
+    operationsServedFromCache += served;
+    subprocessExecutionsAvoided += served;
+    bytesServedFromEvidence += Number.isFinite(event.actualReuseDelivery.valueBytes) ? event.actualReuseDelivery.valueBytes : 0;
   }
   const gitSubprocessesAvoided = successfulDeliveries.filter((event) => event.actualReuseDelivery.key?.startsWith("git.")).length;
   const filesystemReadsAvoided = successfulDeliveries.filter((event) => event.actualReuseDelivery.key === "fs.read").length;
@@ -145,6 +152,7 @@ export function summarizeReflexEvents(events) {
   const hintWindowMs = 60000;
   const promptEvents = events.filter((event) => event?.event === "UserPromptSubmit");
   const factsInjectedByKind = {};
+  const hintFollowupsByFact = {};
   const orientationAfterHint = { total: 0, headAfterHeadHint: 0, branchAfterBranchHint: 0, rootAfterRootHint: 0, statusAfterWorkingTreeHint: 0, fallbackActualReuse: 0 };
   const hintedToolCounts = [];
   const unhintedToolCounts = [];
@@ -155,14 +163,32 @@ export function summarizeReflexEvents(events) {
     const facts = new Set(Array.isArray(prompt.hintFacts) ? prompt.hintFacts : []);
     if (prompt.hintInjected) for (const fact of facts) bump(factsInjectedByKind, fact);
     const start = Date.parse(prompt.at);
+    const nextPromptAt = promptEvents
+      .filter((candidate) => candidate !== prompt && candidate.session === prompt.session && Date.parse(candidate.at) > start)
+      .map((candidate) => Date.parse(candidate.at))
+      .filter(Number.isFinite)
+      .sort((left, right) => left - right)[0] ?? Infinity;
     const turnCalls = preEvents.filter((event) =>
-      prompt.turn && event.turn === prompt.turn && event.session === prompt.session &&
-      Number.isFinite(start) && Date.parse(event.at) >= start && Date.parse(event.at) - start <= hintWindowMs
+      event.session === prompt.session && Number.isFinite(start) && Date.parse(event.at) >= start &&
+      Date.parse(event.at) < nextPromptAt && Date.parse(event.at) - start <= hintWindowMs
     );
     const orientation = turnCalls.flatMap(eventOperations).filter((operation) =>
       ["git.head", "git.branch.current", "git.root"].includes(operation.key)
     );
     if (prompt.hintInjected) {
+      for (const fact of facts) {
+        const matching = turnCalls.flatMap(eventOperations).filter((operation) =>
+          (fact === "workspace.cwd" && operation.key === "workspace.pwd") ||
+          (fact === "git.root" && operation.key === "git.root") ||
+          (fact === "git.head" && operation.key === "git.head") ||
+          (fact === "git.branch.current" && operation.key === "git.branch.current") ||
+          (["git.working-tree", "git.changed-files"].includes(fact) && operation.key?.startsWith("git.status."))
+        );
+        const entry = hintFollowupsByFact[fact] ??= { injectedTurns: 0, matchingChecksAfter: 0, turnsWithMatchingCheck: 0 };
+        entry.injectedTurns += 1;
+        entry.matchingChecksAfter += matching.length;
+        if (matching.length > 0) entry.turnsWithMatchingCheck += 1;
+      }
       hintedToolCounts.push(turnCalls.length);
       hintedOrientationCounts.push(orientation.length);
       orientationAfterHint.total += orientation.length;
@@ -183,6 +209,7 @@ export function summarizeReflexEvents(events) {
 
   return {
     totalEvents: events.length,
+    byReflexRuntime: top(byReflexRuntime, 20),
     totalToolCalls: preEvents.length,
     totalReadOnlyCalls: readOnlyToolCalls,
     readOnlyRecognized,
@@ -201,6 +228,8 @@ export function summarizeReflexEvents(events) {
     searchOperationsAvoided,
     statusDiffOperationsAvoided,
     compoundExecutionsAvoided,
+    subprocessExecutionsAvoided,
+    bytesServedFromEvidence,
     toolCallsAvoidedByPreToolReuse: 0,
     operationsServedFromCache,
     percentReadOnlyOperationsServedFromCache: readOnlyRecognized === 0 ? 0 : Number(((operationsServedFromCache / readOnlyRecognized) * 100).toFixed(2)),
@@ -213,6 +242,7 @@ export function summarizeReflexEvents(events) {
       promptsWithStateHint: promptEvents.filter((event) => event.hintInjected).length,
       factsInjected: Object.values(factsInjectedByKind).reduce((sum, value) => sum + value, 0),
       factsInjectedByKind: top(factsInjectedByKind),
+      followupsByFact: hintFollowupsByFact,
       hintWindowMs,
       orientationChecksAfterHint: orientationAfterHint,
       estimatedChecksAvoided,
@@ -231,6 +261,11 @@ export function summarizeReflexEvents(events) {
     },
     byCommand: top(byCommand),
     actualReuseByCommand: top(actualReuseByCommand),
+    cacheHitRateByCommand: Object.fromEntries(Object.entries(byCommand).map(([key, observed]) => [key, {
+      observed, hits: actualReuseByCommand[key] ?? 0,
+      rate: Number((((actualReuseByCommand[key] ?? 0) / observed) * 100).toFixed(2)),
+    }])),
+    topMissedRepeats: top(missedRepeatsByCommand, 15),
     reuseRejectionsByReason: top(reuseRejectionsByReason, 20),
     repeatedChecksByReuseOutcome: top(repeatedChecksByReuseOutcome, 20),
     compoundCacheMissByCause: top(compoundCacheMissByCause, 20),
